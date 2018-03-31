@@ -42,6 +42,7 @@ module.exports = {
   SETTINGS_MAPS: 'say \x10Maps: \x06{0}',
   MAP_FINISHED: 'say \x10Map finished! \x06GG',
   MAP_CHANGE: 'say \x10Changing map in 20 seconds to: \x06{0}',
+  CHANGE_MAP: 'changelevel ${0}',
   SERIES_FINISHED: 'say \x10Finished the series!',
-  RESTORE_ROUND: 'mp_backup_restore_load_file "{0}",say \x10Round \x06{1}\x10 has been restored, resuming match in:,say \x085...',
+  RESTORE_ROUND: 'mp_backup_restore_load_file "{0}",say \x10Round \x06{1}\x10 has been restored, resuming match in:,say \x085...'
 };

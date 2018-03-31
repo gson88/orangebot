@@ -1,6 +1,6 @@
 {
-  "port": 1337,
-  "server": [
+  "socketPort": 1337,
+  "servers": [
     {
       "host": "0.0.0.0",
       "port": 27025,
@@ -8,21 +8,20 @@
     }
   ],
   "admins": [],
-  "default_rcon": "ankka",
-  "telegram_token": "",
-  "telegram_group": "-148659596",
   "configs": {
-    "warmup": "cfg/warmup.cfg",
-    "knife": "cfg/knife.cfg",
-    "match": "cfg/match.cfg",
-    "overtime": "cfg/overtime.cfg",
-    "fullmap": "cfg/fullmap.cfg"
+    "warmup": "./cfg/warmup.cfg",
+    "knife": "./cfg/knife.cfg",
+    "match": "./cfg/match.cfg",
+    "overtime": "./cfg/overtime.cfg",
+    "fullmap": "./cfg/fullmap.cfg"
   },
-  "recorddemo": true,
-  "knifedefault": true,
-  "otdefault": true,
-  "fullmapdefault": false,
-  "pause_time": 0,
-  "ready_time": 0,
+  "defaults": {
+    "record": false,
+    "knife": true,
+    "ot": true,
+    "fullmap": false,
+    "pause_time": 30,
+    "ready_time": 30
+  },
   "serverType": "external"
 }
