@@ -3,12 +3,12 @@
   "servers": [
     {
       "host": "0.0.0.0",
-      "port": 27025,
+      "port": 27045,
       "rconpass": "password"
     }
   ],
   "admins": [],
-  "configs": {
+  "gameConfigs": {
     "warmup": "./cfg/warmup.cfg",
     "knife": "./cfg/knife.cfg",
     "match": "./cfg/match.cfg",
