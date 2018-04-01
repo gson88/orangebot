@@ -1,10 +1,29 @@
 const appInfo = require('../../package.json');
+const { green, yellow, red } = require('colors/safe');
 
-module.exports = {
+const appName = green(`OrangeBot v${appInfo.version}:`);
+
+const Logger = {
+  isVerbose: false,
   log () {
-    console.log(`\x1b[32mOrangeBot v${appInfo.version}:\x1b[0m`, ...arguments);
+    console.log(appName, ...arguments);
+  },
+  warning () {
+    console.log(appName, yellow('WARNING:'), ...arguments);
   },
   error () {
-    console.error(`\x1b[32mOrangeBot v${appInfo.version}:\x1b[0m`, '\x1b[31mERROR:\x1b[0m', ...arguments);
+    console.error(appName, red('ERROR:'), ...arguments);
+  },
+  verbose () {
+    if (this.isVerbose) {
+      console.log(appName, ...arguments);
+    }
   }
 };
+
+Logger.log.bind(Logger);
+Logger.error.bind(Logger);
+Logger.warning.bind(Logger);
+Logger.verbose.bind(Logger);
+
+module.exports = Logger;

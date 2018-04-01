@@ -3,17 +3,17 @@
   "servers": [
     {
       "host": "0.0.0.0",
-      "port": 27025,
+      "port": 27015,
       "rconpass": "password"
     }
   ],
   "admins": [],
-  "configs": {
-    "warmup": "./cfg/warmup.cfg",
-    "knife": "./cfg/knife.cfg",
-    "match": "./cfg/match.cfg",
-    "overtime": "./cfg/overtime.cfg",
-    "fullmap": "./cfg/fullmap.cfg"
+  "gameConfigs": {
+    "warmup": "./src/cfg/warmup.cfg",
+    "knife": "./src/cfg/knife.cfg",
+    "match": "./src/cfg/match.cfg",
+    "overtime": "./src/cfg/overtime.cfg",
+    "fullmap": "./src/cfg/fullmap.cfg"
   },
   "defaults": {
     "record": false,

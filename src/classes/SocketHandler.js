@@ -9,18 +9,37 @@ const cleanup = require('../utils/node-cleanup');
 class SocketHandler {
   constructor (socketPort, serverHandler) {
     this.serverHandler = serverHandler;
-    
+
+    socket.bind(socketPort);
+    this.subscribeToEvents();
+
+    cleanup.Cleanup(() => {
+      if (socket) {
+        Logger.log('Closing socket');
+        socket.close();
+      }
+    });
+
+    return this;
+  }
+
+  init (port, ip) {
+    socket.send('INIT', port, ip); // SRCDS won't send data if it doesn't get contacted initially
+  }
+
+  subscribeToEvents () {
     socket.on('message', (msg, info) => {
-      console.log('message received');
       const addr = `${info.address}:${info.port}`;
       const text = msg.toString();
-      
       const server = this.serverHandler.getServer(addr);
+
       if (server === null) {
-        console.error('Received a socket message for a server that is not in memory', addr);
+        Logger.warning('Received a socket message for a server that is not in memory', addr);
         return;
       }
-    
+
+      Logger.verbose('Socket message received from serverId', server.serverId);
+
       this.handleTeamJoin(text, server);
       this.handleClantag(text, server);
       this.handlePlayerDisconnect(text, server);
@@ -30,27 +49,18 @@ class SocketHandler {
       this.handleRoundEnd(text, server);
       this.handleGameOver(text, server);
       this.handleCommand(text, server);
-      
+
     }).on('listening', () => {
       const address = socket.address();
       Logger.log('Socket listening', `${address.address}:${address.port}`);
     }).on('close', () => {
-      Logger.log('The socket closed the connection');
+      Logger.warning('The socket connection was closed');
     }).on('error', err => {
       Logger.error('Socket error');
       Logger.error(err);
     });
-    
-    socket.bind(socketPort);
-  
-    cleanup.Cleanup(() => {
-      if (socket) {
-        Logger.log('Closing socket');
-        socket.close(0);
-      }
-    });
   }
-  
+
   /**
    * @param text
    * @param {Server} server
@@ -60,7 +70,7 @@ class SocketHandler {
     const match = regex.exec(text);
     if (match) {
       const steamId = match.capture('steam_id');
-      
+
       const player = server.state.getPlayer(steamId);
       if (!player) {
         if (match.capture('steam_id') !== 'BOT') {
@@ -74,18 +84,18 @@ class SocketHandler {
       server.updateLastLog();
     }
   }
-  
+
   /**
    * @param text
    * @param {Server} server
    */
   handleClantag (text, server) {
-    const re = named(/"(:<user_name>.+)[<](:<user_id>\d+)[>][<](:<steam_id>.*?)[>][<](:<user_team>CT|TERRORIST|Unassigned|Spectator)[>]" triggered "clantag" \(value "(:<clan_tag>.*)"\)/);
-    const match = re.exec(text);
+    const regex = named(/"(:<user_name>.+)[<](:<user_id>\d+)[>][<](:<steam_id>.*?)[>][<](:<user_team>CT|TERRORIST|Unassigned|Spectator)[>]" triggered "clantag" \(value "(:<clan_tag>.*)"\)/);
+    const match = regex.exec(text);
     if (match) {
       const steamId = match.capture('steam_id');
       const player = server.state.getPlayer(steamId);
-      
+
       if (!player) {
         if (match.capture('steam_id') !== 'BOT') {
           server.state.addPlayer(steamId, match.capture('user_team'), match.capture('user_name'), match.capture('clan_tag'));
@@ -96,7 +106,7 @@ class SocketHandler {
       server.updateLastLog();
     }
   }
-  
+
   /**
    * @param text
    * @param {Server} server
@@ -111,7 +121,7 @@ class SocketHandler {
       server.updateLastLog();
     }
   }
-  
+
   /**
    * @param text
    * @param {Server} server
@@ -125,7 +135,7 @@ class SocketHandler {
       server.updateLastLog();
     }
   }
-  
+
   /**
    * @param text
    * @param {Server} server
@@ -138,9 +148,8 @@ class SocketHandler {
       server.newmap(match.capture('map'));
       server.updateLastLog();
     }
-  
   }
-  
+
   /**
    * @param text
    * @param {Server} server
@@ -154,7 +163,7 @@ class SocketHandler {
       server.updateLastLog();
     }
   }
-  
+
   /**
    * @param text
    * @param {Server} server
@@ -172,7 +181,7 @@ class SocketHandler {
       server.updateLastLog();
     }
   }
-  
+
   /**
    * @param text
    * @param {Server} server
@@ -185,7 +194,7 @@ class SocketHandler {
       server.updateLastLog();
     }
   }
-  
+
   /**
    * @param text
    * @param {Server} server
@@ -200,6 +209,7 @@ class SocketHandler {
       const userTeam = match.capture('user_team');
       const cmd = params[0];
       params.shift();
+
       switch (cmd.toLowerCase()) {
         case Commands.RESTORE:
         case Commands.REPLAY:
@@ -298,7 +308,7 @@ class SocketHandler {
       server.updateLastLog();
     }
   }
-  
+
 }
 
 module.exports = SocketHandler;

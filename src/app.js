@@ -1,57 +1,48 @@
-const parsedArgs = require('minimist')(process.argv.slice(2));
-const filesExist = require('./utils/file-exists');
-const orangebot = require('./orangebot');
+const getPublicIP = require('public-ip');
+const localIp = require('ip').address();
+const id64 = require('./utils/steam-id-64');
+const Server = require('./classes/Server');
+const ServerHandler = require('./classes/ServerHandler');
+const SocketHandler = require('./classes/SocketHandler');
 const Logger = require('./utils/logger');
-const defaultConfigFilepath = './config.json';
 
+/**
+ * @param {{ servers, admins, defaults, gameConfigs, socketPort, admins, serverType }} config
+ */
+const run = async config => {
+  const { servers, defaults, gameConfigs, admins, socketPort, serverType } = config;
+  const socketIp = serverType === 'local' ? localIp : await getPublicIP.v4();
 
-const configFilepath = parseAndVerifyArgs();
-const config = require(configFilepath);
-checkGameConfigFiles(config);
-orangebot.run(config);
+  const serverHandler = new ServerHandler();
+  const socket = new SocketHandler(socketPort, serverHandler);
 
-function parseAndVerifyArgs () {
-  if (parsedArgs.h) {
-    printHelp();
-    process.exit(0);
-  }
-  
-  let configFilepath = parsedArgs.i;
-  if (!parsedArgs.i) {
-    configFilepath = defaultConfigFilepath;
-  } else if (parsedArgs.i === true) {
-    configFilepath = defaultConfigFilepath;
-    Logger.error('You did not specify a config file after the argument -i');
-    Logger.error('Will try to use default config file', defaultConfigFilepath);
-  }
-  
-  if ( !filesExist([ configFilepath ]) ) {
-    Logger.error('Config file not found:', configFilepath);
+  serverHandler.addServers(servers.map(_server => {
+    const server = new Server(_server, defaults, gameConfigs)
+      .setAdmins(admins.map(id64))
+      .whitelistSocket(socketIp, socketPort)
+      .startServer();
+
+    socket.init(server.port, server.ip);
+    return server;
+  }));
+};
+
+process.on('unhandledRejection', err => {
+  Logger.error('Uncaught promise rejection');
+  Logger.error(err);
+  process.exit(1);
+});
+
+process.on('uncaughtException', err => {
+  if (err.code === 'EADDRINUSE') {
+    Logger.error('Could not bind UDP Socket to port', err.port);
+    Logger.error('Maybe try to use another port?');
     process.exit(1);
   }
-  
-  return configFilepath;
-}
 
-function checkGameConfigFiles (config) {
-  const configFileNames = Object.keys(config.gameConfigs).map(configName => config.gameConfigs[configName]);
-  const missingFiles = filesExist.getMissingFiles(configFileNames);
-  
-  if (missingFiles.length > 0) {
-    Logger.error('One or more game config file(s) did not exist:', missingFiles);
-    process.exit(1);
-  }
-}
+  Logger.error('Uncaught exception');
+  Logger.error(err);
+  process.exit(1);
+});
 
-function printHelp() {
-  console.log('Usage:             node orangebot.js [-i json] [-h]');
-  console.log('Description:       OrangeBot v3.1.0 is a CS:GO matchmaking bot written in node.js.');
-  console.log('GitHub:            https://github.com/dejavueakay/orangebot');
-  console.log();
-  console.log('Arguments:');
-  console.log(' -i filename.json           Set the json file to use');
-  console.log(' -h                         See this help');
-  console.log();
-  console.log('For further documentation, visit our GitHub wiki: https://github.com/dejavueakay/orangebot/wiki');
-  process.exit();
-}
+module.exports = { run };

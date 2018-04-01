@@ -1,35 +1,44 @@
 class ServerHandler {
   constructor () {
     this.servers = { };
+    this.addServers = this.addServers.bind(this);
+    this.addServer = this.addServer.bind(this);
+    this.removeServer = this.removeServer.bind(this);
+
     setInterval(this.tickCommandQueue.bind(this), 100);
     // setInterval(this.tickSomethingElse.bind(this), 30000);
   }
-  
+
   addServer (server) {
     this.servers[server.getIpAndPort()] = server;
   }
-  
+
+  addServers (servers) {
+    servers.forEach(this.addServer);
+  }
+
   removeServer (server) {
     delete this.servers[server.getIpAndPort()];
   }
-  
+
   getServer (ipAndPort) {
     if (typeof this.servers[ipAndPort] !== 'undefined') {
       return this.servers[ipAndPort];
     }
-    
+
     return null;
   }
-  
+
   tickCommandQueue() {
-    for (let i in this.servers) {
-      if (this.servers[i].commandQueue.length > 0) {
-        const cmd = this.servers[i].commandQueue.shift();
-        this.servers[i].execRconCommand(cmd);
-      }
-    }
+    Object.values(this.servers)
+      .filter(server => server.commandQueue.length > 0)
+      .forEach(server => {
+        server.execRconCommand(
+          server.commandQueue.shift()
+        );
+      });
   }
-  
+
   tickSomethingElse () {
     // for (let i in this.servers) {
     //   if (!this.servers.hasOwnProperty(i)) {
