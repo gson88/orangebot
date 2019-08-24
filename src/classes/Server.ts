@@ -1,59 +1,70 @@
 import fs from 'fs';
 import RCon from 'simple-rcon';
+import regexp from 'named-regexp';
 import id64 from '../utils/steam-id-64';
-import Teams from '../constants/teams';
+import TeamConstants from '../constants/teams';
 import Commands from '../constants/rcon-commands';
 import ServerState from './ServerState';
-import { cleanString, cleanChatString } from '../utils/string-utils';
+import {
+  formatString,
+  cleanString,
+  cleanChatString
+} from '../utils/string-utils';
 import Logger from '../utils/logger';
-const named = require('named-regexp').named;
+import { IDefaultConfig, IGameConfigs, IServer } from '../types/types';
 
 export default class Server {
-  static nrInstances: number = 0;
+  static nrInstances = 0;
+
   ip: string;
   port: number;
   rconpass: string;
   serverId: number;
-  admins: any[];
-  steamid: any[];
-  commandQueue: any[];
-  defaultSettings: any;
+  admins: string[] = [];
+  commandQueue: any[] = [];
+  defaultSettings: IDefaultConfig;
   configFiles: {
     [key: string]: string;
   };
-  rconConnection: any;
+  rconConnection: any = null;
   state: ServerState;
 
-  constructor(serverConfig, defaults, gameConfigs) {
+  constructor(
+    serverConfig: IServer,
+    defaults: IDefaultConfig,
+    gameConfigs: IGameConfigs
+  ) {
     Logger.log('Creating new Server with serverId', Server.nrInstances);
 
     this.ip = serverConfig.host;
     this.port = serverConfig.port;
     this.rconpass = serverConfig.rconpass;
     this.serverId = Server.nrInstances++;
-    this.admins = [];
-    this.steamid = [];
-    this.commandQueue = [];
     this.defaultSettings = defaults;
     this.configFiles = gameConfigs;
-    this.rconConnection = null;
     this.state = new ServerState({ ...defaults });
   }
 
-  setAdmins(admins) {
+  setAdmins(admins: string[]): Server {
     this.admins = admins;
     return this;
   }
 
   getRconConnection() {
-    if (this.rconConnection !== null) {
+    if (this.rconConnection) {
       return this.rconConnection;
     }
 
-    this.rconConnection = new RCon({
+    this.rconConnection = this.createRconConnection();
+    return this.rconConnection;
+  }
+
+  createRconConnection() {
+    return new RCon({
       host: this.ip,
       port: this.port,
-      password: this.rconpass
+      password: this.rconpass,
+      connect: true
     })
       .on('error', err => {
         Logger.error('Could not connect to rcon on server');
@@ -61,18 +72,15 @@ export default class Server {
       })
       .on('disconnected', () => {
         this.rconConnection = null;
-      })
-      .connect();
-
-    return this.rconConnection;
+      });
   }
 
-  getIpAndPort() {
+  getIpAndPort(): string {
     return `${this.ip}:${this.port}`;
   }
 
   updateLastLog() {
-    this.state.last_log = Date.now();
+    this.state.updateLastLog();
   }
 
   whitelistSocket(socketIp, socketPort) {
@@ -86,19 +94,19 @@ export default class Server {
     this.getGameStatus();
 
     setTimeout(() => {
-      this.addToCommandQueue(Commands.WELCOME);
+      this.addToCommandQueue(Commands.SAY_WELCOME);
     }, 1000);
 
     Logger.log(`${this.ip}:${this.port} - Connected to Server.`);
     return this;
   }
 
-  addToCommandQueue(cmds) {
-    if (!cmds) {
+  addToCommandQueue(commands: string) {
+    if (!commands) {
       return;
     }
 
-    const splitCommands = cmds.split(';').map(cmd => cmd.trim());
+    const splitCommands = commands.split(';').map(cmd => cmd.trim());
     this.commandQueue = this.commandQueue.concat(splitCommands);
   }
 
@@ -110,13 +118,16 @@ export default class Server {
   }
 
   clantag(team) {
-    if (team !== Teams.TERRORIST && team !== Teams.CT) {
+    if (team !== TeamConstants.TERRORIST && team !== TeamConstants.CT) {
       return team;
     }
 
-    let tags = {};
+    const tags = {};
     let ret = 'mix1';
-    if (team === Teams.CT && this.clantag(Teams.TERRORIST) === 'mix1') {
+    if (
+      team === TeamConstants.CT &&
+      this.clantag(TeamConstants.TERRORIST) === 'mix1'
+    ) {
       ret = 'mix2';
     }
 
@@ -130,14 +141,17 @@ export default class Server {
         tags[player.clantag]++;
       }
     }
-    let max = 0;
-    for (let prop in tags) {
+    const max = 0;
+    for (const prop in tags) {
       if (tags.hasOwnProperty(prop) && tags[prop] > max) {
         ret = prop;
       }
     }
     ret = cleanString(ret);
-    if (team === Teams.CT && this.clantag(Teams.TERRORIST) === ret) {
+    if (
+      team === TeamConstants.CT &&
+      this.clantag(TeamConstants.TERRORIST) === ret
+    ) {
       ret = ret + '2';
     }
     return ret;
@@ -148,13 +162,13 @@ export default class Server {
   }
 
   stats(tochat) {
-    let team1 = this.clantag(Teams.TERRORIST);
-    let team2 = this.clantag(Teams.CT);
-    let stat = {
+    const team1 = this.clantag(TeamConstants.TERRORIST);
+    const team2 = this.clantag(TeamConstants.CT);
+    const stat = {
       [team1]: [],
       [team2]: []
     };
-    for (let i in this.state.maps) {
+    for (const i in this.state.maps) {
       if (this.state.score[this.state.maps[i]] !== undefined) {
         if (this.state.score[this.state.maps[i]][team1] !== undefined) {
           stat[team1][i] = this.state.score[this.state.maps[i]][team1];
@@ -171,8 +185,8 @@ export default class Server {
         stat[team2][i] = 'x';
       }
     }
-    let maps = [];
-    let scores = { team1: 0, team2: 0 };
+    const maps = [];
+    const scores = { team1: 0, team2: 0 };
     for (let j = 0; j < this.state.maps.length; j++) {
       maps.push(
         this.state.maps[j] + ' ' + stat[team1][j] + '-' + stat[team2][j]
@@ -186,13 +200,15 @@ export default class Server {
         }
       }
     }
-    let chat = '\x10' + team1 + ' [\x06' + maps.join(', ') + '\x10] ' + team2;
+
+    const chat = '\x10' + team1 + ' [\x06' + maps.join(', ') + '\x10] ' + team2;
     if (tochat) {
-      this.addToCommandQueue(Commands.SAY.format(chat));
+      this.addToCommandQueue(formatString(Commands.SAY, chat));
     } else {
-      let index = this.state.maps.indexOf(this.state.map);
+      const index = this.state.maps.indexOf(this.state.map);
       this.addToCommandQueue(
-        Commands.GOTV_OVERLAY.format(
+        formatString(
+          Commands.GOTV_OVERLAY,
           index + 1,
           this.state.maps.length,
           scores.team1,
@@ -204,12 +220,12 @@ export default class Server {
   }
 
   restore(round) {
-    let roundNum: number|string = parseInt(round);
+    let roundNum: number | string = parseInt(round);
     if (roundNum < 10) {
       roundNum = '0' + String(roundNum);
     }
     this.addToCommandQueue(
-      Commands.RESTORE_ROUND.format(`backup_round${roundNum}.txt`, round)
+      formatString(Commands.RESTORE_ROUND, `backup_round${roundNum}.txt`, round)
     );
     setTimeout(() => {
       this.addToCommandQueue('say \x054...');
@@ -224,7 +240,7 @@ export default class Server {
       this.addToCommandQueue('say \x0f1...');
     }, 4000);
     setTimeout(() => {
-      this.addToCommandQueue(Commands.LIVE + ';mp_unpause_match');
+      this.addToCommandQueue(Commands.SAY_LIVE + ';mp_unpause_match');
     }, 5000);
   }
 
@@ -240,15 +256,15 @@ export default class Server {
     }
 
     if (this.state.paused) {
-      this.addToCommandQueue(Commands.PAUSE_ALREADY);
+      this.addToCommandQueue(Commands.SAY_PAUSE_ALREADY);
       return;
     }
 
     this.addToCommandQueue(Commands.PAUSE_ENABLED);
     this.state.paused = true;
     this.state.unpause = {
-      [Teams.TERRORIST]: false,
-      [Teams.CT]: false
+      [TeamConstants.TERRORIST]: false,
+      [TeamConstants.CT]: false
     };
 
     if (this.state.freeze) {
@@ -257,34 +273,37 @@ export default class Server {
   }
 
   matchPause() {
-    this.addToCommandQueue(Commands.MATCH_PAUSED);
+    this.addToCommandQueue(Commands.SAY_MATCH_PAUSED);
+
+    if (this.state.pause_time === -1) {
+      return;
+    }
 
     if (this.state.pause_time) {
       clearTimeout(this.state.pauses.timer);
       this.state.pauses.timer = setTimeout(() => {
-        this.addToCommandQueue(Commands.PAUSE_TIMEOUT);
+        this.addToCommandQueue(Commands.SAY_PAUSE_TIMEOUT);
         this.state.pauses.timer = setTimeout(() => {
-          this.ready(true);
+          this.ready(null);
         }, 20 * 1000);
       }, (this.state.pause_time - 20) * 1000);
-      this.addToCommandQueue(Commands.PAUSE_TIME.format(this.state.pause_time));
+      this.addToCommandQueue(
+        formatString(Commands.SAY_PAUSE_TIME, this.state.pause_time)
+      );
     }
   }
 
   getGameStatus() {
     const conn = this.getRconConnection();
     conn.exec('status', res => {
-      const regex = named(/map\s+:\s+(:<map>.*?)\s/);
+      const regex = regexp.named(/map\s+:\s+(:<map>.*?)\s/);
       const match = regex.exec(res.body);
-      if (match !== null) {
-        let map = match.capture('map');
-        if (this.state.maps.indexOf(map) >= 0) {
-          this.state.map = map;
-        } else {
-          this.state.map = map;
-        }
-        this.stats(false);
+      if (match === null) {
+        return;
       }
+
+      this.state.map = match.capture('map');
+      this.stats(false);
     });
   }
 
@@ -296,7 +315,9 @@ export default class Server {
       this.state.mapindex = 0;
 
       if (this.state.map !== maps[0]) {
-        this.addToCommandQueue(Commands.CHANGE_MAP.format(this.state.maps[0]));
+        this.addToCommandQueue(
+          formatString(Commands.CHANGE_MAP, this.state.maps[0])
+        );
       } else {
         this.newmap(maps[0], 0);
       }
@@ -309,9 +330,9 @@ export default class Server {
     }
   }
 
-  ready(team) {
+  ready(team: string | null) {
     if (this.state.live && this.state.paused) {
-      if (team === true) {
+      if (team === null) {
         this.state.unpause.TERRORIST = true;
         this.state.unpause.CT = true;
       } else {
@@ -319,7 +340,8 @@ export default class Server {
       }
       if (this.state.unpause.TERRORIST !== this.state.unpause.CT) {
         this.addToCommandQueue(
-          Commands.READY.format(
+          formatString(
+            Commands.SAY_TEAM_READY,
             this.state.unpause.TERRORIST ? Commands.T : Commands.CT,
             this.state.unpause.TERRORIST ? Commands.CT : Commands.T
           )
@@ -334,12 +356,12 @@ export default class Server {
         this.addToCommandQueue(Commands.MATCH_UNPAUSE);
         this.state.paused = false;
         this.state.unpause = {
-          [Teams.TERRORIST]: false,
-          [Teams.CT]: false
+          [TeamConstants.TERRORIST]: false,
+          [TeamConstants.CT]: false
         };
       }
     } else if (!this.state.live) {
-      if (team === true) {
+      if (team === null) {
         this.state.ready.TERRORIST = true;
         this.state.ready.CT = true;
       } else {
@@ -347,7 +369,8 @@ export default class Server {
       }
       if (this.state.ready.TERRORIST !== this.state.ready.CT) {
         this.addToCommandQueue(
-          Commands.READY.format(
+          formatString(
+            Commands.SAY_TEAM_READY,
             this.state.ready.TERRORIST ? Commands.T : Commands.CT,
             this.state.ready.TERRORIST ? Commands.CT : Commands.T
           )
@@ -357,7 +380,7 @@ export default class Server {
         this.state.ready.CT === true
       ) {
         this.state.live = true;
-        if ('timer' in this.state.ready) {
+        if (this.state.ready.timer) {
           clearTimeout(this.state.ready.timer);
         }
         if (this.state.knife) {
@@ -365,7 +388,7 @@ export default class Server {
           this.addToCommandQueue(Commands.KNIFE_STARTING);
 
           setTimeout(() => {
-            this.addToCommandQueue(Commands.KNIFE_STARTED);
+            this.addToCommandQueue(Commands.SAY_KNIFE_STARTED);
           }, 9000);
         } else {
           this.addToCommandQueue(this.getConfig(this.configFiles.match));
@@ -386,7 +409,7 @@ export default class Server {
           this.addToCommandQueue('say \x0f1...');
         }, 4000);
         setTimeout(() => {
-          this.addToCommandQueue(Commands.LIVE);
+          this.addToCommandQueue(Commands.SAY_LIVE);
         }, 5000);
       }
     }
@@ -413,11 +436,11 @@ export default class Server {
 
     if (!this.state.knife) {
       this.state.knife = true;
-      this.addToCommandQueue(Commands.WARMUP_KNIFE);
+      this.addToCommandQueue(Commands.SAY_WARMUP_KNIFE);
       this.startReadyTimer();
     } else {
       this.state.knife = false;
-      this.addToCommandQueue(Commands.KNIFE_DISABLED);
+      this.addToCommandQueue(Commands.SAY_KNIFE_DISABLED);
       if ('timer' in this.state.ready) {
         clearTimeout(this.state.ready.timer);
       }
@@ -431,35 +454,41 @@ export default class Server {
 
     if (this.state.record === true) {
       this.state.record = false;
-      this.addToCommandQueue(Commands.DEMO_RECDISABLED);
+      this.addToCommandQueue(Commands.SAY_DEMO_RECDISABLED);
     } else {
       this.state.record = true;
-      this.addToCommandQueue(Commands.DEMO_RECENABLED);
+      this.addToCommandQueue(Commands.SAY_DEMO_RECENABLED);
     }
   }
 
   settings() {
-    this.addToCommandQueue(Commands.SETTINGS);
-    this.addToCommandQueue(Commands.SETTINGS_KNIFE.format(this.state.knife));
+    this.addToCommandQueue(Commands.SAY_SETTINGS);
     this.addToCommandQueue(
-      Commands.SETTINGS_RECORDING.format(this.state.record)
+      formatString(Commands.SAY_SETTINGS_KNIFE, this.state.knife)
     );
-    this.addToCommandQueue(Commands.SETTINGS_OT.format(this.state.ot));
     this.addToCommandQueue(
-      Commands.SETTINGS_FULLMAP.format(this.state.fullmap)
+      formatString(Commands.SAY_SETTINGS_RECORDING, this.state.record)
+    );
+    this.addToCommandQueue(
+      formatString(Commands.SAY_SETTINGS_OT, this.state.ot)
+    );
+    this.addToCommandQueue(
+      formatString(Commands.SAY_SETTINGS_FULLMAP, this.state.fullmap)
     );
 
     const outputMaps = this.state.maps.join(', ');
-    this.addToCommandQueue(Commands.SETTINGS_MAPS.format(outputMaps));
+    this.addToCommandQueue(
+      formatString(Commands.SAY_SETTINGS_MAPS, outputMaps)
+    );
   }
 
   mapend() {
-    this.addToCommandQueue(Commands.MAP_FINISHED);
+    this.addToCommandQueue(Commands.SAY_MAP_FINISHED);
     this.state.mapindex++;
     if (this.state.record === true) {
       this.addToCommandQueue('tv_stoprecord');
       this.addToCommandQueue(
-        Commands.DEMO_FINISHED.format(this.state.demoname)
+        formatString(Commands.SAY_DEMO_FINISHED, this.state.demoname)
       );
     }
 
@@ -467,14 +496,17 @@ export default class Server {
       this.state.maps.length >= 0 &&
       this.state.maps.length === this.state.mapindex
     ) {
-      this.addToCommandQueue(Commands.SERIES_FINISHED);
+      this.addToCommandQueue(Commands.SAY_SERIES_FINISHED);
       this.state.mapindex = 0;
     } else if (
       this.state.maps.length >= 0 &&
       this.state.maps.length > this.state.mapindex
     ) {
       this.addToCommandQueue(
-        Commands.MAP_CHANGE.format(this.state.maps[this.state.mapindex])
+        formatString(
+          Commands.SAY_MAP_CHANGE,
+          this.state.maps[this.state.mapindex]
+        )
       );
       setTimeout(() => {
         this.addToCommandQueue(
@@ -487,11 +519,11 @@ export default class Server {
   overtime() {
     if (this.state.ot === true) {
       this.state.ot = false;
-      this.addToCommandQueue(Commands.OT_DISABLED);
+      this.addToCommandQueue(Commands.SAY_OT_DISABLED);
       this.addToCommandQueue('mp_overtime_enable 0');
     } else {
       this.state.ot = true;
-      this.addToCommandQueue(Commands.OT_ENABLED);
+      this.addToCommandQueue(Commands.SAY_OT_ENABLED);
       this.addToCommandQueue(this.getConfig(this.configFiles.overtime));
     }
   }
@@ -499,11 +531,11 @@ export default class Server {
   fullmap() {
     if (this.state.fullmap === true) {
       this.state.fullmap = false;
-      this.addToCommandQueue(Commands.FM_DISABLED);
+      this.addToCommandQueue(Commands.SAY_FM_DISABLED);
       this.addToCommandQueue('mp_match_can_clinch 1');
     } else {
       this.state.fullmap = true;
-      this.addToCommandQueue(Commands.FM_ENABLED);
+      this.addToCommandQueue(Commands.SAY_FM_ENABLED);
       this.addToCommandQueue(this.getConfig(this.configFiles.fullmap));
     }
   }
@@ -516,12 +548,12 @@ export default class Server {
         .replace(/:/g, '-')
         .replace(/\..+/, '');
       const demoname = `${dateString}_${this.state.map}_${cleanString(
-        this.clantag(Teams.TERRORIST)
-      )}-${cleanString(this.clantag(Teams.CT))}.dem`;
+        this.clantag(TeamConstants.TERRORIST)
+      )}-${cleanString(this.clantag(TeamConstants.CT))}.dem`;
 
       this.state.demoname = demoname;
       this.addToCommandQueue('tv_stoprecord; tv_record ' + demoname);
-      this.addToCommandQueue(Commands.DEMO_REC.format(demoname));
+      this.addToCommandQueue(formatString(Commands.SAY_DEMO_REC, demoname));
     }
   }
 
@@ -555,31 +587,34 @@ export default class Server {
       clearTimeout(this.state.ready.timer);
     }
 
-    this.addToCommandQueue(Commands.WARMUP_TIME.format(this.state.ready_time));
+    this.addToCommandQueue(
+      formatString(Commands.SAY_WARMUP_TIME, this.state.ready_time)
+    );
     this.state.ready.timer = setTimeout(() => {
-      this.addToCommandQueue(Commands.WARMUP_TIMEOUT);
+      this.addToCommandQueue(Commands.SAY_WARMUP_TIMEOUT);
       this.state.ready.timer = setTimeout(() => {
-        this.ready(true);
+        this.ready(null);
       }, 20 * 1000);
     }, (this.state.ready_time - 20) * 1000);
   }
 
   score(score) {
-    let tagscore = {
-      [this.clantag(Teams.CT)]: score.CT,
-      [this.clantag(Teams.TERRORIST)]: score.TERRORIST
+    this.state.score[this.state.map] = {
+      [this.clantag(TeamConstants.CT)]: score.CT,
+      [this.clantag(TeamConstants.TERRORIST)]: score.TERRORIST
     };
-
-    this.state.score[this.state.map] = tagscore;
     this.stats(false);
     if (score.TERRORIST + score.CT === 1 && this.state.knife) {
       this.state.knifewinner =
-        score.TERRORIST === 1 ? Teams.TERRORIST : Teams.CT;
+        score.TERRORIST === 1 ? TeamConstants.TERRORIST : TeamConstants.CT;
       this.state.knife = false;
       this.addToCommandQueue(this.getConfig(this.configFiles.match));
       this.addToCommandQueue(
-        Commands.KNIFE_WON.format(
-          this.state.knifewinner === Teams.TERRORIST ? Commands.T : Commands.CT
+        formatString(
+          Commands.KNIFE_WON,
+          this.state.knifewinner === TeamConstants.TERRORIST
+            ? Commands.T
+            : Commands.CT
         )
       );
     } else if (this.state.paused) {
@@ -591,7 +626,7 @@ export default class Server {
   stay(team) {
     if (team === this.state.knifewinner) {
       this.addToCommandQueue(Commands.KNIFE_STAY);
-      this.state.knifewinner = false;
+      this.state.knifewinner = null;
       this.lo3();
       this.startrecord();
     }
@@ -600,7 +635,7 @@ export default class Server {
   swap(team) {
     if (team === this.state.knifewinner) {
       this.addToCommandQueue(Commands.KNIFE_SWAP);
-      this.state.knifewinner = false;
+      this.state.knifewinner = null;
       this.lo3();
       this.startrecord();
     }
@@ -636,26 +671,26 @@ export default class Server {
   }
 
   say(msg) {
-    this.addToCommandQueue(Commands.SAY.format(cleanChatString(msg)));
+    this.addToCommandQueue(formatString(Commands.SAY, cleanChatString(msg)));
   }
 
   warmup() {
     this.state.ready = {
-      [Teams.TERRORIST]: false,
-      [Teams.CT]: false
+      [TeamConstants.TERRORIST]: false,
+      [TeamConstants.CT]: false
     };
     this.state.unpause = {
-      [Teams.TERRORIST]: false,
-      [Teams.CT]: false
+      [TeamConstants.TERRORIST]: false,
+      [TeamConstants.CT]: false
     };
     this.state.live = false;
     this.state.paused = false;
     this.state.freeze = false;
-    this.state.knifewinner = false;
+    this.state.knifewinner = null;
     this.state.knife = this.defaultSettings.knife;
-    this.state.record = this.defaultSettings.RECORD;
-    this.state.ot = this.defaultSettings.OT;
-    this.state.fullmap = this.defaultSettings.FULLMAP;
+    this.state.record = this.defaultSettings.record;
+    this.state.ot = this.defaultSettings.ot;
+    this.state.fullmap = this.defaultSettings.fullmap;
 
     this.addToCommandQueue(this.getConfig(this.configFiles.warmup));
 
@@ -667,6 +702,6 @@ export default class Server {
       this.addToCommandQueue(this.getConfig(this.configFiles.fullmap));
     }
 
-    this.addToCommandQueue(Commands.WARMUP);
+    this.addToCommandQueue(Commands.SAY_WARMUP);
   }
 }

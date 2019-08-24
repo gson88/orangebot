@@ -1,7 +1,7 @@
 export interface IConfig {
   servers: IServer[];
-  defaults: string[];
   gameConfigs: IGameConfigs;
+  defaults: IDefaultConfig;
   admins: string[];
   socketPort: number;
   serverType: 'local' | 'external';
@@ -15,4 +15,13 @@ export interface IServer {
 
 export interface IGameConfigs {
   [key: string]: string;
+}
+
+export interface IDefaultConfig {
+  record: boolean;
+  knife: boolean;
+  ot: boolean;
+  fullmap: boolean;
+  pause_time: number;
+  ready_time: number;
 }

@@ -1,37 +1,37 @@
-import dgram from 'dgram';
+import dgram, { Socket } from 'dgram';
 import { ChatCommandConstants } from '../constants/chat-commands';
 import Teams from '../constants/teams';
 import Logger from '../utils/logger';
-import cleanup from '../utils/node-cleanup';
+import * as cleanup from '../utils/node-cleanup';
 import regexp from 'named-regexp';
-
-const socket = dgram.createSocket('udp4');
+import ServerHandler from './ServerHandler';
 
 export default class SocketHandler {
-  serverHandler;
+  private static socket: Socket = dgram.createSocket('udp4');
+  private serverHandler: ServerHandler;
 
-  constructor(socketPort, serverHandler) {
+  constructor(socketPort: number, serverHandler: ServerHandler) {
     this.serverHandler = serverHandler;
 
-    socket.bind(socketPort);
+    SocketHandler.socket.bind(socketPort);
     this.subscribeToEvents();
 
     cleanup.Cleanup(() => {
-      if (socket) {
+      if (SocketHandler.socket) {
         Logger.log('Closing socket');
-        socket.close();
+        SocketHandler.socket.close();
       }
     });
 
     return this;
   }
 
-  init(port: number, ip: string) {
-    socket.send('INIT', port, ip); // SRCDS won't send data if it doesn't get contacted initially
+  static init(port: number, ip: string) {
+    SocketHandler.socket.send('INIT', port, ip); // SRCDS won't send data if it doesn't get contacted initially
   }
 
   subscribeToEvents() {
-    socket
+    SocketHandler.socket
       .on('message', (msg, info) => {
         const addr = `${info.address}:${info.port}`;
         const text = msg.toString();
@@ -50,19 +50,21 @@ export default class SocketHandler {
           server.serverId
         );
 
-        this.handleTeamJoin(text, server);
-        this.handleClantag(text, server);
-        this.handlePlayerDisconnect(text, server);
-        this.handleMapLoading(text, server);
-        this.handleMapLoaded(text, server);
-        this.handleRoundStart(text, server);
-        this.handleRoundEnd(text, server);
-        this.handleGameOver(text, server);
+        SocketHandler.handleTeamJoin(text, server);
+        SocketHandler.handleClantag(text, server);
+        SocketHandler.handlePlayerDisconnect(text, server);
+        SocketHandler.handleMapLoading(text, server);
+        SocketHandler.handleMapLoaded(text, server);
+        SocketHandler.handleRoundStart(text, server);
+        SocketHandler.handleRoundEnd(text, server);
+        SocketHandler.handleGameOver(text, server);
         this.handleCommand(text, server);
       })
       .on('listening', () => {
-        const address = socket.address();
-        Logger.log('Socket listening', `${address.address}:${address.port}`);
+        const address = SocketHandler.socket.address();
+        if (typeof address !== 'string') {
+          Logger.log('Socket listening', `${address.address}:${address.port}`);
+        }
       })
       .on('close', () => {
         Logger.warning('The socket connection was closed');
@@ -77,37 +79,39 @@ export default class SocketHandler {
    * @param text
    * @param {Server.ts} server
    */
-  handleTeamJoin(text, server) {
+  static handleTeamJoin(text, server) {
     const regex = regexp.named(
       /"(:<user_name>.+)[<](:<user_id>\d+)[>][<](:<steam_id>.*)[>]" switched from team [<](:<user_team>CT|TERRORIST|Unassigned|Spectator)[>] to [<](:<new_team>CT|TERRORIST|Unassigned|Spectator)[>]/
     );
     const match = regex.exec(text);
-    if (match) {
-      const steamId = match.capture('steam_id');
-
-      const player = server.state.getPlayer(steamId);
-      if (!player) {
-        if (match.capture('steam_id') !== 'BOT') {
-          server.state.addPlayer(
-            steamId,
-            match.capture('new_team'),
-            match.capture('user_name')
-          );
-        }
-      } else {
-        player.steamid = steamId;
-        player.team = match.capture('new_team');
-        player.name = match.capture('user_name');
-      }
-      server.updateLastLog();
+    if (!match) {
+      return;
     }
+
+    const steamId = match.capture('steam_id');
+
+    const player = server.state.getPlayer(steamId);
+    if (!player) {
+      if (match.capture('steam_id') !== 'BOT') {
+        server.state.addPlayer(
+          steamId,
+          match.capture('new_team'),
+          match.capture('user_name')
+        );
+      }
+    } else {
+      player.steamid = steamId;
+      player.team = match.capture('new_team');
+      player.name = match.capture('user_name');
+    }
+    server.updateLastLog();
   }
 
   /**
    * @param text
    * @param {Server.ts} server
    */
-  handleClantag(text, server) {
+  static handleClantag(text, server) {
     const regex = regexp.named(
       /"(:<user_name>.+)[<](:<user_id>\d+)[>][<](:<steam_id>.*?)[>][<](:<user_team>CT|TERRORIST|Unassigned|Spectator)[>]" triggered "clantag" \(value "(:<clan_tag>.*)"\)/
     );
@@ -139,7 +143,7 @@ export default class SocketHandler {
    * @param text
    * @param {Server.ts} server
    */
-  handlePlayerDisconnect(text, server) {
+  static handlePlayerDisconnect(text, server) {
     // player disconnect
     const regex = regexp.named(
       /"(:<user_name>.+)[<](:<user_id>\d+)[>][<](:<steam_id>.*)[>][<](:<user_team>CT|TERRORIST|Unassigned|Spectator)[>]" disconnected/
@@ -156,7 +160,7 @@ export default class SocketHandler {
    * @param text
    * @param {Server.ts} server
    */
-  handleMapLoading(text, server) {
+  static handleMapLoading(text, server) {
     // map loading
     const regex = regexp.named(/Loading map "(:<map>.*?)"/);
     const match = regex.exec(text);
@@ -170,7 +174,7 @@ export default class SocketHandler {
    * @param text
    * @param {Server.ts} server
    */
-  handleMapLoaded(text, server) {
+  static handleMapLoaded(text, server) {
     // map started
     const regex = regexp.named(/Started map "(:<map>.*?)"/);
     const match = regex.exec(text);
@@ -184,7 +188,7 @@ export default class SocketHandler {
    * @param text
    * @param {Server.ts} server
    */
-  handleRoundStart(text, server) {
+  static handleRoundStart(text, server) {
     // round start
     const regex = regexp.named(/World triggered "Round_Start"/);
     const match = regex.exec(text);
@@ -198,7 +202,7 @@ export default class SocketHandler {
    * @param text
    * @param {Server.ts} server
    */
-  handleRoundEnd(text, server) {
+  static handleRoundEnd(text, server) {
     // round end
     const regex = regexp.named(
       /Team "(:<team>.*)" triggered "SFUI_Notice_(:<team_win>Terrorists_Win|CTs_Win|Target_Bombed|Target_Saved|Bomb_Defused)" \(CT "(:<ct_score>\d+)"\) \(T "(:<t_score>\d+)"\)/
@@ -218,7 +222,7 @@ export default class SocketHandler {
    * @param text
    * @param {Server.ts} server
    */
-  handleGameOver(text, server) {
+  static handleGameOver(text, server) {
     const regex = regexp.named(/Game Over: competitive/);
     const match = regex.exec(text);
     if (match) {

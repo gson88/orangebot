@@ -1,11 +1,4 @@
-interface IPlayer {
-  steamid: string;
-  team: string;
-  name: string;
-  clantag: string;
-}
-
-export default class Player implements IPlayer {
+export default class Player {
   steamid: string;
   team: string;
   name: string;

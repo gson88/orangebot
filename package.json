@@ -1,37 +1,39 @@
 {
   "name": "orangebot",
-  "version": "4.0.0",
-  "description": "OrangeBot is a CS:GO matchmaking bot written in node.js. It uses udp logging and remote rcon to execute server commands based on chat !commands.",
+  "version": "5.0.0",
+  "description": "OrangeBot is a CS:GO matchmaking bot written in node.js via typescript. It uses udp logging and remote rcon to execute server commands based on chat !commands.",
   "main": "src/index.ts",
   "license": "SEE LICENSE IN LICENSE",
   "scripts": {
-    "start": "node src/index.ts",
-    "dev": "nodemon src/index.ts -- -d",
+    "start": "node src/index",
+    "dev": "tsc -w --noEmit -p ./tsconfig.json",
     "eslint": "eslint ./src"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/dejavueakay/orangebot"
+    "url": "https://github.com/gson88/orangebot"
   },
   "dependencies": {
-    "@types/steamid": "^1.1.0",
-    "colors": "^1.3.3",
-    "ip": "^1.1.5",
-    "minimist": "^1.2.0",
-    "named-regexp": "^0.1.1",
-    "public-ip": "^3.2.0",
-    "simple-rcon": "^0.3.1",
-    "socket.io": "^2.2.0",
-    "steamid": "^1.1.3",
-    "tcp-ping": "^0.1.1"
+    "@types/steamid": "1.1.0",
+    "colors": "1.3.3",
+    "ip": "1.1.5",
+    "minimist": "1.2.0",
+    "named-regexp": "0.1.1",
+    "public-ip": "3.2.0",
+    "simple-rcon": "0.3.1",
+    "socket.io": "2.2.0",
+    "steamid": "1.1.3",
+    "tcp-ping": "0.1.1"
   },
   "devDependencies": {
-    "@types/node": "^12.7.2",
-    "@types/public-ip": "^3.1.0",
-    "babel-eslint": "^10.0.2",
-    "eslint": "^6.2.1",
-    "eslint-plugin-babel": "^5.3.0",
-    "prettier": "^1.18.2",
-    "typescript": "^3.5.3"
+    "@types/node": "12.7.2",
+    "@types/public-ip": "3.1.0",
+    "@typescript-eslint/eslint-plugin": "2.0.0",
+    "@typescript-eslint/parser": "2.0.0",
+    "babel-eslint": "10.0.2",
+    "eslint": "6.2.1",
+    "eslint-plugin-babel": "5.3.0",
+    "prettier": "1.18.2",
+    "typescript": "3.5.3"
   }
 }

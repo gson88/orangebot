@@ -1,21 +1,19 @@
 {
   "compilerOptions": {
-    "module": "commonjs",
+    "module": "amd",
     "esModuleInterop": true,
     "noImplicitUseStrict": true,
-//    "allowSyntheticDefaultImports": true,
     "target": "es6",
-    "noImplicitAny": false,
     "moduleResolution": "node",
+    "noImplicitAny": false,
     "allowJs": true,
     "resolveJsonModule": true,
     "sourceMap": true,
     "outDir": "dist",
-    "outFile": "./app.js",
     "baseUrl": "./src"
   },
   "include": [
-    "src/**/*",
-    "node_modules/**/*"
-  ]
+    "src/**/*"
+  ],
+  "exclude": ["node_modules"]
 }

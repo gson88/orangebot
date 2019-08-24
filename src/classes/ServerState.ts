@@ -1,59 +1,45 @@
 import TeamConstants from '../constants/teams';
 import Player from './Player';
+import Timeout = NodeJS.Timeout;
 
 export default class ServerState {
-  live: boolean;
-  map: string;
-  maps: any[];
-  mapindex: number;
-  knife: string;
-  record: string;
-  demoname: string;
-  score: any[];
-  fullmap: string;
-  ot: string;
-  knifewinner: boolean;
-  paused: boolean;
-  freeze: boolean;
-  pause_time: number;
-  ready_time: number;
-  unpause: {};
-  ready: {};
-  players: {
-    [steamId: string]: Player
+  live = false;
+  map = '';
+  maps: string[] = [];
+  mapindex = 0;
+  knife: boolean;
+  record: boolean;
+  demoname = '';
+  score: any[] = [];
+  fullmap: boolean;
+  ot: boolean;
+  knifewinner: string = null;
+  paused = false;
+  freeze = false;
+  pause_time = -1;
+  ready_time = -1;
+  unpause: {
+    [team: string]: boolean;
+  } = {
+    [TeamConstants.TERRORIST]: false,
+    [TeamConstants.CT]: false
   };
-  pauses: {};
-  last_log: Date;
+  ready: {
+    [TeamConstants.TERRORIST]: boolean;
+    [TeamConstants.CT]: boolean;
+    timer?: Timeout;
+  } = {
+    [TeamConstants.TERRORIST]: false,
+    [TeamConstants.CT]: false
+  };
+  players: {
+    [steamId: string]: Player;
+  } = {};
+  pauses: { timer: any } = { timer: null };
+  lastLog: number = null;
 
   constructor(values) {
-    this.live = false;
-    this.map = '';
-    this.maps = [];
-    this.mapindex = 0;
-    this.knife = '';
-    this.record = '';
-    this.demoname = '';
-    this.ot = '';
-    this.fullmap = '';
-    this.score = [];
-    this.knifewinner = false;
-    this.paused = false;
-    this.freeze = false;
-    this.pause_time = -1;
-    this.ready_time = -1;
-    this.unpause = {
-      [TeamConstants.TERRORIST]: false,
-      [TeamConstants.CT]: false
-    };
-    this.ready = {
-      [TeamConstants.TERRORIST]: false,
-      [TeamConstants.CT]: false
-    };
-    this.players = {};
-    this.pauses = {};
-    this.last_log = null;
-
-    for (let key in values) {
+    for (const key in values) {
       if (!this.hasOwnProperty(key) || !values.hasOwnProperty(key)) {
         continue;
       }
@@ -66,24 +52,30 @@ export default class ServerState {
   /**
    * @returns {Player}
    */
-  getPlayer(steamId) {
+  getPlayer = (steamId: string) => {
     return this.players[steamId] ? this.players[steamId] : undefined;
-  }
+  };
 
-  addPlayer(steamId, team, name, clantag) {
+  addPlayer = (
+    steamId: string,
+    team: string,
+    name: string,
+    clantag: string
+  ) => {
     this.players[steamId] = new Player(steamId, team, name, clantag);
-  }
+  };
 
-  deletePlayer(steamId) {
+  deletePlayer = (steamId: string) => {
     if (this.players[steamId]) {
       delete this.players[steamId];
     }
-  }
+  };
 
-  clearPlayers() {
-    for (let steamId in this.players) {
-      delete this.players[steamId];
-    }
+  clearPlayers = () => {
     this.players = {};
-  }
+  };
+
+  updateLastLog = () => {
+    this.lastLog = Date.now();
+  };
 }
