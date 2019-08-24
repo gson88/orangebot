@@ -1,45 +1,39 @@
-class ServerHandler {
-  constructor () {
-    this.servers = { };
-    this.addServers = this.addServers.bind(this);
-    this.addServer = this.addServer.bind(this);
-    this.removeServer = this.removeServer.bind(this);
+import Server from './Server';
 
-    setInterval(this.tickCommandQueue.bind(this), 100);
-    // setInterval(this.tickSomethingElse.bind(this), 30000);
+export default class ServerHandler {
+  servers: { [key: string]: Server } = {};
+
+  constructor() {
+    setInterval(this.tickCommandQueue, 100);
   }
 
-  addServer (server) {
+  addServer = server => {
     this.servers[server.getIpAndPort()] = server;
-  }
+  };
 
-  addServers (servers) {
+  addServers = servers => {
     servers.forEach(this.addServer);
-  }
+  };
 
-  removeServer (server) {
+  removeServer = server => {
     delete this.servers[server.getIpAndPort()];
-  }
+  };
 
-  getServer (ipAndPort) {
-    if (typeof this.servers[ipAndPort] !== 'undefined') {
-      return this.servers[ipAndPort];
-    }
+  getServer = ipAndPort => {
+    return typeof this.servers[ipAndPort] !== 'undefined'
+      ? this.servers[ipAndPort]
+      : null;
+  };
 
-    return null;
-  }
-
-  tickCommandQueue() {
+  tickCommandQueue = () => {
     Object.values(this.servers)
       .filter(server => server.commandQueue.length > 0)
       .forEach(server => {
-        server.execRconCommand(
-          server.commandQueue.shift()
-        );
+        server.execRconCommand(server.commandQueue.shift());
       });
-  }
+  };
 
-  tickSomethingElse () {
+  tickSomethingElse() {
     // for (let i in this.servers) {
     //   if (!this.servers.hasOwnProperty(i)) {
     //     return;
@@ -74,5 +68,3 @@ class ServerHandler {
     // }
   }
 }
-
-module.exports = ServerHandler;

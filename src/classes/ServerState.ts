@@ -1,7 +1,30 @@
-const TeamConstants = require('../constants/teams');
-const Player = require('./Player');
+import TeamConstants from '../constants/teams';
+import Player from './Player';
 
-class ServerState {
+export default class ServerState {
+  live: boolean;
+  map: string;
+  maps: any[];
+  mapindex: number;
+  knife: string;
+  record: string;
+  demoname: string;
+  score: any[];
+  fullmap: string;
+  ot: string;
+  knifewinner: boolean;
+  paused: boolean;
+  freeze: boolean;
+  pause_time: number;
+  ready_time: number;
+  unpause: {};
+  ready: {};
+  players: {
+    [steamId: string]: Player
+  };
+  pauses: {};
+  last_log: Date;
+
   constructor(values) {
     this.live = false;
     this.map = '';
@@ -28,7 +51,7 @@ class ServerState {
     };
     this.players = {};
     this.pauses = {};
-    this.last_log = undefined;
+    this.last_log = null;
 
     for (let key in values) {
       if (!this.hasOwnProperty(key) || !values.hasOwnProperty(key)) {
@@ -64,5 +87,3 @@ class ServerState {
     this.players = {};
   }
 }
-
-module.exports = ServerState;

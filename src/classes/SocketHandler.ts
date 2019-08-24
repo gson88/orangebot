@@ -1,12 +1,13 @@
-const dgram = require('dgram');
-const socket = dgram.createSocket('udp4');
-const named = require('named-regexp').named;
-const { ChatCommandConstants } = require('../constants/chat-commands');
-const Teams = require('../constants/teams');
-const Logger = require('../utils/logger');
-const cleanup = require('../utils/node-cleanup');
+import dgram from 'dgram';
+import { ChatCommandConstants } from '../constants/chat-commands';
+import Teams from '../constants/teams';
+import Logger from '../utils/logger';
+import cleanup from '../utils/node-cleanup';
+import regexp from 'named-regexp';
 
-class SocketHandler {
+const socket = dgram.createSocket('udp4');
+
+export default class SocketHandler {
   serverHandler;
 
   constructor(socketPort, serverHandler) {
@@ -74,10 +75,10 @@ class SocketHandler {
 
   /**
    * @param text
-   * @param {Server} server
+   * @param {Server.ts} server
    */
   handleTeamJoin(text, server) {
-    const regex = named(
+    const regex = regexp.named(
       /"(:<user_name>.+)[<](:<user_id>\d+)[>][<](:<steam_id>.*)[>]" switched from team [<](:<user_team>CT|TERRORIST|Unassigned|Spectator)[>] to [<](:<new_team>CT|TERRORIST|Unassigned|Spectator)[>]/
     );
     const match = regex.exec(text);
@@ -104,10 +105,10 @@ class SocketHandler {
 
   /**
    * @param text
-   * @param {Server} server
+   * @param {Server.ts} server
    */
   handleClantag(text, server) {
-    const regex = named(
+    const regex = regexp.named(
       /"(:<user_name>.+)[<](:<user_id>\d+)[>][<](:<steam_id>.*?)[>][<](:<user_team>CT|TERRORIST|Unassigned|Spectator)[>]" triggered "clantag" \(value "(:<clan_tag>.*)"\)/
     );
     const match = regex.exec(text);
@@ -136,11 +137,11 @@ class SocketHandler {
 
   /**
    * @param text
-   * @param {Server} server
+   * @param {Server.ts} server
    */
   handlePlayerDisconnect(text, server) {
     // player disconnect
-    const regex = named(
+    const regex = regexp.named(
       /"(:<user_name>.+)[<](:<user_id>\d+)[>][<](:<steam_id>.*)[>][<](:<user_team>CT|TERRORIST|Unassigned|Spectator)[>]" disconnected/
     );
     const match = regex.exec(text);
@@ -153,11 +154,11 @@ class SocketHandler {
 
   /**
    * @param text
-   * @param {Server} server
+   * @param {Server.ts} server
    */
   handleMapLoading(text, server) {
     // map loading
-    const regex = named(/Loading map "(:<map>.*?)"/);
+    const regex = regexp.named(/Loading map "(:<map>.*?)"/);
     const match = regex.exec(text);
     if (match) {
       server.state.clearPlayers();
@@ -167,11 +168,11 @@ class SocketHandler {
 
   /**
    * @param text
-   * @param {Server} server
+   * @param {Server.ts} server
    */
   handleMapLoaded(text, server) {
     // map started
-    const regex = named(/Started map "(:<map>.*?)"/);
+    const regex = regexp.named(/Started map "(:<map>.*?)"/);
     const match = regex.exec(text);
     if (match) {
       server.newmap(match.capture('map'));
@@ -181,11 +182,11 @@ class SocketHandler {
 
   /**
    * @param text
-   * @param {Server} server
+   * @param {Server.ts} server
    */
   handleRoundStart(text, server) {
     // round start
-    const regex = named(/World triggered "Round_Start"/);
+    const regex = regexp.named(/World triggered "Round_Start"/);
     const match = regex.exec(text);
     if (match) {
       server.round();
@@ -195,11 +196,11 @@ class SocketHandler {
 
   /**
    * @param text
-   * @param {Server} server
+   * @param {Server.ts} server
    */
   handleRoundEnd(text, server) {
     // round end
-    const regex = named(
+    const regex = regexp.named(
       /Team "(:<team>.*)" triggered "SFUI_Notice_(:<team_win>Terrorists_Win|CTs_Win|Target_Bombed|Target_Saved|Bomb_Defused)" \(CT "(:<ct_score>\d+)"\) \(T "(:<t_score>\d+)"\)/
     );
     const match = regex.exec(text);
@@ -215,10 +216,10 @@ class SocketHandler {
 
   /**
    * @param text
-   * @param {Server} server
+   * @param {Server.ts} server
    */
   handleGameOver(text, server) {
-    const regex = named(/Game Over: competitive/);
+    const regex = regexp.named(/Game Over: competitive/);
     const match = regex.exec(text);
     if (match) {
       server.mapend();
@@ -228,11 +229,11 @@ class SocketHandler {
 
   /**
    * @param text
-   * @param {Server} server
+   * @param {Server.ts} server
    */
   handleCommand(text, server) {
     // !command
-    const regex = named(
+    const regex = regexp.named(
       /"(:<user_name>.+)[<](:<user_id>\d+)[>][<](:<steam_id>.*)[>][<](:<user_team>CT|TERRORIST|Unassigned|Spectator|Console)[>]" say(:<say_team>_team)? "[!.](:<text>.*)"/
     );
     const match = regex.exec(text);
@@ -344,5 +345,3 @@ class SocketHandler {
     }
   }
 }
-
-module.exports = SocketHandler;

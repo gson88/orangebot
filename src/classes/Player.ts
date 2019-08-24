@@ -5,7 +5,7 @@ interface IPlayer {
   clantag: string;
 }
 
-class Player implements IPlayer {
+export default class Player implements IPlayer {
   steamid: string;
   team: string;
   name: string;
@@ -18,5 +18,3 @@ class Player implements IPlayer {
     this.clantag = clantag;
   }
 }
-
-module.exports = Player;

@@ -4,9 +4,9 @@ const getPublicIP = require('public-ip');
 const localIp = require('ip').address();
 const id64 = require('./utils/steam-id-64');
 const Server = require('./classes/Server');
-const ServerHandler = require('./classes/ServerHandler');
 const SocketHandler = require('./classes/SocketHandler');
 const Logger = require('./utils/logger');
+import ServerHandler from './classes/ServerHandler';
 
 /**
  * @param {{ servers, admins, defaults, gameConfigs, socketPort, admins, serverType }} config
