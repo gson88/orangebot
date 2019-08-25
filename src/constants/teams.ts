@@ -1,6 +1,6 @@
-enum Teams {
+enum TeamConstants {
   CT = 'CT',
   TERRORIST = 'TERRORIST'
 }
 
-export default Teams;
+export default TeamConstants;

@@ -12,7 +12,10 @@ import {
 } from '../utils/string-utils';
 import Logger from '../utils/logger';
 import { IDefaultConfig, IGameConfigs, IServer } from '../types/types';
+import SocketHandler from './SocketHandler';
+import { ChatCommandConstants } from '../constants/chat-commands';
 
+//Todo: Prevent memory leaks / remove existing timeouts when removing server
 export default class Server {
   static nrInstances = 0;
 
@@ -21,11 +24,9 @@ export default class Server {
   rconpass: string;
   serverId: number;
   admins: string[] = [];
-  commandQueue: any[] = [];
+  commandQueue: string[] = [];
   defaultSettings: IDefaultConfig;
-  configFiles: {
-    [key: string]: string;
-  };
+  configFiles: IGameConfigs;
   rconConnection: any = null;
   state: ServerState;
 
@@ -51,6 +52,7 @@ export default class Server {
   }
 
   getRconConnection() {
+    Logger.log('getRconConnection');
     if (this.rconConnection) {
       return this.rconConnection;
     }
@@ -67,7 +69,7 @@ export default class Server {
       connect: true
     })
       .on('error', err => {
-        Logger.error('Could not connect to rcon on server');
+        Logger.error('RconConnection error');
         throw err;
       })
       .on('disconnected', () => {
@@ -79,11 +81,11 @@ export default class Server {
     return `${this.ip}:${this.port}`;
   }
 
-  updateLastLog() {
+  updateLastLog(): void {
     this.state.updateLastLog();
   }
 
-  whitelistSocket(socketIp, socketPort) {
+  whitelistSocket(socketIp: string, socketPort: number) {
     this.addToCommandQueue(
       `sv_rcon_whitelist_address ${socketIp};logaddress_add ${socketIp}:${socketPort};log on`
     );
@@ -97,7 +99,7 @@ export default class Server {
       this.addToCommandQueue(Commands.SAY_WELCOME);
     }, 1000);
 
-    Logger.log(`${this.ip}:${this.port} - Connected to Server.`);
+    // Logger.log(`${this.ip}:${this.port} - Connected to Server.`);
     return this;
   }
 
@@ -110,18 +112,14 @@ export default class Server {
     this.commandQueue = this.commandQueue.concat(splitCommands);
   }
 
-  execRconCommand(command = '') {
+  execRconCommand(command: string) {
     const conn = this.getRconConnection();
 
     Logger.verbose('Sending command:', command);
     conn.exec(command);
   }
 
-  clantag(team) {
-    if (team !== TeamConstants.TERRORIST && team !== TeamConstants.CT) {
-      return team;
-    }
-
+  clantag(team: TeamConstants) {
     const tags = {};
     let ret = 'mix1';
     if (
@@ -131,7 +129,7 @@ export default class Server {
       ret = 'mix2';
     }
 
-    for (let i in this.state.players) {
+    for (const i in this.state.players) {
       const player = this.state.getPlayer(i);
 
       if (player.team === team && player.clantag !== undefined) {
@@ -157,52 +155,60 @@ export default class Server {
     return ret;
   }
 
-  isAdmin(steamid) {
+  isAdmin(steamid: string) {
     return this.admins.indexOf(id64(steamid)) >= 0;
   }
 
-  stats(tochat) {
+  calculateStats(printInChat: boolean): void {
     const team1 = this.clantag(TeamConstants.TERRORIST);
     const team2 = this.clantag(TeamConstants.CT);
     const stat = {
       [team1]: [],
       [team2]: []
     };
-    for (const i in this.state.maps) {
-      if (this.state.score[this.state.maps[i]] !== undefined) {
-        if (this.state.score[this.state.maps[i]][team1] !== undefined) {
-          stat[team1][i] = this.state.score[this.state.maps[i]][team1];
+    for (const mapIndex in this.state.maps) {
+      if (this.state.score[this.state.maps[mapIndex]] !== undefined) {
+        if (this.state.score[this.state.maps[mapIndex]][team1] !== undefined) {
+          stat[team1][mapIndex] = this.state.score[this.state.maps[mapIndex]][
+            team1
+          ];
         } else {
-          stat[team1][i] = 'x';
+          stat[team1][mapIndex] = 'x';
         }
-        if (this.state.score[this.state.maps[i]][team2] !== undefined) {
-          stat[team2][i] = this.state.score[this.state.maps[i]][team2];
+        if (this.state.score[this.state.maps[mapIndex]][team2] !== undefined) {
+          stat[team2][mapIndex] = this.state.score[this.state.maps[mapIndex]][
+            team2
+          ];
         } else {
-          stat[team2][i] = 'x';
+          stat[team2][mapIndex] = 'x';
         }
       } else {
-        stat[team1][i] = 'x';
-        stat[team2][i] = 'x';
+        stat[team1][mapIndex] = 'x';
+        stat[team2][mapIndex] = 'x';
       }
     }
     const maps = [];
     const scores = { team1: 0, team2: 0 };
-    for (let j = 0; j < this.state.maps.length; j++) {
+    for (const mapIndex in this.state.maps) {
       maps.push(
-        this.state.maps[j] + ' ' + stat[team1][j] + '-' + stat[team2][j]
+        this.state.maps[mapIndex] +
+          ' ' +
+          stat[team1][mapIndex] +
+          '-' +
+          stat[team2][mapIndex]
       );
 
-      if (this.state.maps[j] !== this.state.map) {
-        if (stat[team1][j] > stat[team2][j]) {
+      if (this.state.maps[mapIndex] !== this.state.map) {
+        if (stat[team1][mapIndex] > stat[team2][mapIndex]) {
           scores.team1 += 1;
-        } else if (stat[team1][j] < stat[team2][j]) {
+        } else if (stat[team1][mapIndex] < stat[team2][mapIndex]) {
           scores.team2 += 1;
         }
       }
     }
 
     const chat = '\x10' + team1 + ' [\x06' + maps.join(', ') + '\x10] ' + team2;
-    if (tochat) {
+    if (printInChat) {
       this.addToCommandQueue(formatString(Commands.SAY, chat));
     } else {
       const index = this.state.maps.indexOf(this.state.map);
@@ -216,7 +222,6 @@ export default class Server {
         )
       );
     }
-    return chat;
   }
 
   restore(round) {
@@ -227,6 +232,11 @@ export default class Server {
     this.addToCommandQueue(
       formatString(Commands.RESTORE_ROUND, `backup_round${roundNum}.txt`, round)
     );
+
+    this.sendFiveSecondCountdownInChat(Commands.SAY_LIVE + ';mp_unpause_match');
+  }
+
+  sendFiveSecondCountdownInChat(finalMessage: string = null) {
     setTimeout(() => {
       this.addToCommandQueue('say \x054...');
     }, 1000);
@@ -239,9 +249,12 @@ export default class Server {
     setTimeout(() => {
       this.addToCommandQueue('say \x0f1...');
     }, 4000);
-    setTimeout(() => {
-      this.addToCommandQueue(Commands.SAY_LIVE + ';mp_unpause_match');
-    }, 5000);
+
+    if (finalMessage) {
+      setTimeout(() => {
+        this.addToCommandQueue(finalMessage);
+      }, 5000);
+    }
   }
 
   round() {
@@ -256,7 +269,7 @@ export default class Server {
     }
 
     if (this.state.paused) {
-      this.addToCommandQueue(Commands.SAY_PAUSE_ALREADY);
+      this.addToCommandQueue(Commands.SAY_PAUSED_ALREADY_CALLED);
       return;
     }
 
@@ -303,7 +316,7 @@ export default class Server {
       }
 
       this.state.map = match.capture('map');
-      this.stats(false);
+      // this.calculateStats(false);
     });
   }
 
@@ -396,21 +409,7 @@ export default class Server {
           this.addToCommandQueue(Commands.MATCH_STARTING);
           this.lo3();
         }
-        setTimeout(() => {
-          this.addToCommandQueue('say \x054...');
-        }, 1000);
-        setTimeout(() => {
-          this.addToCommandQueue('say \x063...');
-        }, 2000);
-        setTimeout(() => {
-          this.addToCommandQueue('say \x102...');
-        }, 3000);
-        setTimeout(() => {
-          this.addToCommandQueue('say \x0f1...');
-        }, 4000);
-        setTimeout(() => {
-          this.addToCommandQueue(Commands.SAY_LIVE);
-        }, 5000);
+        this.sendFiveSecondCountdownInChat(Commands.SAY_LIVE);
       }
     }
   }
@@ -423,7 +422,7 @@ export default class Server {
       this.state.map = map;
     }
     setTimeout(() => {
-      this.stats(false);
+      this.calculateStats(false);
       this.warmup();
       this.startReadyTimer();
     }, delay);
@@ -558,8 +557,8 @@ export default class Server {
   }
 
   getConfig(file) {
-    const config_unformatted = fs.readFileSync(file, 'utf8');
-    return config_unformatted.replace(/(\r\n\t|\n|\r\t)/gm, '; ');
+    const configUnformatted = fs.readFileSync(file, 'utf8');
+    return configUnformatted.replace(/(\r\n\t|\n|\r\t)/gm, '; ');
   }
 
   lo3() {
@@ -603,7 +602,7 @@ export default class Server {
       [this.clantag(TeamConstants.CT)]: score.CT,
       [this.clantag(TeamConstants.TERRORIST)]: score.TERRORIST
     };
-    this.stats(false);
+    this.calculateStats(false);
     if (score.TERRORIST + score.CT === 1 && this.state.knife) {
       this.state.knifewinner =
         score.TERRORIST === 1 ? TeamConstants.TERRORIST : TeamConstants.CT;
@@ -644,6 +643,9 @@ export default class Server {
   quit() {
     this.addToCommandQueue('say \x10Goodbye from OrangeBot');
     this.addToCommandQueue('logaddress_delall; log off');
+
+    //Todo: Make sure there is no memory leaks
+    //Todo: Advertise to serverHandler that this server has shut down
   }
 
   debug() {
@@ -667,7 +669,7 @@ export default class Server {
         ' CT:' +
         this.state.unpause.CT
     );
-    this.stats(true);
+    this.calculateStats(true);
   }
 
   say(msg) {
@@ -703,5 +705,133 @@ export default class Server {
     }
 
     this.addToCommandQueue(Commands.SAY_WARMUP);
+  }
+
+  handleSocketMessage(text: string) {
+    SocketHandler.handleTeamJoin(text, this);
+    SocketHandler.handleClantag(text, this);
+    SocketHandler.handlePlayerDisconnect(text, this);
+    SocketHandler.handleMapLoading(text, this);
+    SocketHandler.handleMapLoaded(text, this);
+    SocketHandler.handleRoundStart(text, this);
+    SocketHandler.handleRoundEnd(text, this);
+    SocketHandler.handleGameOver(text, this);
+    this.handleCommand(text);
+  }
+
+  handleCommand(text: string) {
+    // !command
+    const regex = regexp.named(
+      /"(:<user_name>.+)[<](:<user_id>\d+)[>][<](:<steam_id>.*)[>][<](:<user_team>CT|TERRORIST|Unassigned|Spectator|Console)[>]" say(:<say_team>_team)? "[!.](:<text>.*)"/
+    );
+    const match = regex.exec(text);
+    if (!match) {
+      return;
+    }
+
+    const userId = match.capture('user_id');
+    const steamId = match.capture('steam_id');
+    const userTeam = match.capture('user_team');
+    const params = match.capture('text').split(' ');
+
+    const isAdmin = userId === '0' || this.isAdmin(steamId);
+    const cmd = params[0];
+    params.shift();
+
+    switch (cmd.toLowerCase()) {
+      case ChatCommandConstants.RESTORE:
+      case ChatCommandConstants.REPLAY:
+        if (isAdmin) {
+          this.restore(params);
+        }
+        break;
+      case ChatCommandConstants.STATUS:
+      case ChatCommandConstants.STATS:
+      case ChatCommandConstants.SCORE:
+      case ChatCommandConstants.SCORES:
+        this.calculateStats(true);
+        break;
+      case ChatCommandConstants.RESTART:
+      case ChatCommandConstants.RESET:
+      case ChatCommandConstants.WARMUP:
+        if (isAdmin) {
+          this.warmup();
+        }
+        break;
+      case ChatCommandConstants.MAPS:
+      case ChatCommandConstants.MAP:
+      case ChatCommandConstants.START:
+      case ChatCommandConstants.MATCH:
+      case ChatCommandConstants.STARTMATCH:
+        if (isAdmin || !this.state.live) {
+          this.start(params);
+        }
+        break;
+      case ChatCommandConstants.FORCE:
+        if (isAdmin) {
+          this.ready(null);
+        }
+        break;
+      case ChatCommandConstants.RESUME:
+      case ChatCommandConstants.READY:
+      case ChatCommandConstants.RDY:
+      case ChatCommandConstants.GABEN:
+      case ChatCommandConstants.R:
+      case ChatCommandConstants.UNPAUSE:
+        this.ready(userTeam);
+        break;
+      case ChatCommandConstants.PAUSE:
+        this.pause();
+        break;
+      case ChatCommandConstants.STAY:
+        this.stay(userTeam);
+        break;
+      case ChatCommandConstants.SWAP:
+      case ChatCommandConstants.SWITCH:
+        this.swap(userTeam);
+        break;
+      case ChatCommandConstants.KNIFE:
+        if (isAdmin) {
+          this.knife();
+        }
+        break;
+      case ChatCommandConstants.RECORD:
+        if (isAdmin) {
+          this.record();
+        }
+        break;
+      case ChatCommandConstants.OT:
+      case ChatCommandConstants.OVERTIME:
+        if (isAdmin) {
+          this.overtime();
+        }
+        break;
+      case ChatCommandConstants.FULLMAP:
+        if (isAdmin) {
+          this.fullmap();
+        }
+        break;
+      case ChatCommandConstants.SETTINGS:
+        this.settings();
+        break;
+      case ChatCommandConstants.DISCONNECT:
+      case ChatCommandConstants.QUIT:
+      case ChatCommandConstants.LEAVE:
+        if (isAdmin) {
+          this.quit();
+          Logger.log(this.getIpAndPort() + ' - Disconnected by admin.');
+        }
+        break;
+      case ChatCommandConstants.SAY:
+        if (isAdmin) {
+          this.say(params.join(' '));
+        }
+        break;
+      case ChatCommandConstants.DEBUG:
+        this.debug();
+        break;
+      default:
+    }
+    this.updateLastLog();
   }
 }

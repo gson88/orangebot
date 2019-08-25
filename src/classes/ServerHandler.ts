@@ -1,9 +1,7 @@
 import Server from './Server';
 
 export default class ServerHandler {
-  servers: {
-    [key: string]: Server;
-  } = {};
+  servers: { [ipAndPort: string]: Server } = {};
 
   constructor() {
     setInterval(this.tickCommandQueue, 100);
@@ -18,13 +16,12 @@ export default class ServerHandler {
   };
 
   removeServer = (server: Server) => {
+    //Todo: Prevent memory leaks
     delete this.servers[server.getIpAndPort()];
   };
 
-  getServer = (ipAndPort: string) => {
-    return typeof this.servers[ipAndPort] !== 'undefined'
-      ? this.servers[ipAndPort]
-      : null;
+  getServer = (ipAndPort: string): Server | undefined => {
+    return this.servers[ipAndPort];
   };
 
   tickCommandQueue = () => {

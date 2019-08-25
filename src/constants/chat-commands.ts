@@ -41,7 +41,7 @@ export default {
   RESTORE: 'restore',
   REPLAY: 'replay',
   STATUS: 'status',
-  STATS: 'stats',
+  STATS: 'calculateStats',
   SCORE: 'score',
   SCORES: 'scores',
   RESTART: 'restart',

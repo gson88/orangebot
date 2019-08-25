@@ -6,42 +6,60 @@ import SocketHandler from './classes/SocketHandler';
 import Logger from './utils/logger';
 import ServerHandler from './classes/ServerHandler';
 import { IConfig } from './types/types';
+import { RemoteInfo } from 'dgram';
 
-/**
- * @param {{ servers, admins, defaults, gameConfigs, socketPort, admins, serverType }} config
- */
 const run = async (config: IConfig) => {
   const {
-    servers,
+    servers: serverConfigs,
     defaults,
     gameConfigs,
     admins,
     socketPort,
     serverType
   } = config;
+
   const socketIp =
     serverType === 'local' ? ip.address() : await getPublicIP.v4();
 
   const serverHandler = new ServerHandler();
-  const socketHandler = new SocketHandler(socketPort, serverHandler);
+  const socketHandler = new SocketHandler(socketPort);
 
-  serverHandler.addServers(
-    servers.map(_server => {
-      const server = new Server(_server, defaults, gameConfigs)
-        .setAdmins(admins.map(id64))
-        .whitelistSocket(socketIp, socketPort)
-        .startServer();
+  socketHandler.addSocketMessageCallback((msg: Buffer, info: RemoteInfo) => {
+    const addr = `${info.address}:${info.port}`;
+    const server = serverHandler.getServer(addr);
 
-      SocketHandler.init(server.port, server.ip);
-      return server;
-    })
-  );
+    if (!server) {
+      Logger.warning(
+        'Received a socket message for a server that is not in memory',
+        {
+          addr,
+          msg
+        }
+      );
+      return;
+    }
+
+    Logger.verbose('Socket message received from serverId', server.serverId);
+    server.handleSocketMessage(msg.toString());
+  });
+
+  const serverInstances = serverConfigs.map(serverConfig => {
+    const server = new Server(serverConfig, defaults, gameConfigs)
+      .setAdmins(admins.map(id64))
+      .whitelistSocket(socketIp, socketPort);
+
+    socketHandler.init(server.ip, server.port);
+    server.startServer();
+
+    return server;
+  });
+  serverHandler.addServers(serverInstances);
 };
 
 process.on('unhandledRejection', (err: any) => {
   Logger.error('Unhandled promise rejection');
   Logger.error(err);
-  process.exit(1);
+  process.exit(0);
 });
 
 process.on('uncaughtException', (err: any) => {
@@ -52,8 +70,9 @@ process.on('uncaughtException', (err: any) => {
   }
 
   Logger.error('Uncaught exception');
-  Logger.error(err);
-  process.exit(1);
+  Logger.log(err);
+
+  process.exit(0);
 });
 
 export default { run };

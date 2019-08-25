@@ -1,6 +1,5 @@
 import TeamConstants from '../constants/teams';
 import Player from './Player';
-import Timeout = NodeJS.Timeout;
 
 export default class ServerState {
   live = false;
@@ -27,7 +26,7 @@ export default class ServerState {
   ready: {
     [TeamConstants.TERRORIST]: boolean;
     [TeamConstants.CT]: boolean;
-    timer?: Timeout;
+    timer?: NodeJS.Timeout;
   } = {
     [TeamConstants.TERRORIST]: false,
     [TeamConstants.CT]: false
@@ -60,7 +59,7 @@ export default class ServerState {
     steamId: string,
     team: string,
     name: string,
-    clantag: string
+    clantag?: string
   ) => {
     this.players[steamId] = new Player(steamId, team, name, clantag);
   };

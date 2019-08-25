@@ -32,7 +32,7 @@ export default {
   SAY_PAUSE_REMAINING: 'say \x10Pauses remaining: \x06{0}\x10 of \x06{1}',
   SAY_PAUSE_TIMEOUT: 'say \x10Continuing in \x0620 seconds',
   SAY_PAUSE_TIME: 'say \x10Pause will automatically end in \x06{0} seconds',
-  SAY_PAUSE_ALREADY: 'say \x10A pause was already called.',
+  SAY_PAUSED_ALREADY_CALLED: 'say \x10A pause was already called.',
   SAY_MATCH_STARTED: 'say \x10Match started! GL HF!',
   SAY_MATCH_PAUSED:
     'say \x10Match will resume when both teams are \x06!ready\x10.',

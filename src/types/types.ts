@@ -15,6 +15,11 @@ export interface IServer {
 
 export interface IGameConfigs {
   [key: string]: string;
+  // warmup: string;
+  // overtime: string;
+  // fullmap: string;
+  // knife: string;
+  // match: string;
 }
 
 export interface IDefaultConfig {

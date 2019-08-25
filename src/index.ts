@@ -1,15 +1,16 @@
+import { resolve } from 'path';
 import minimist from 'minimist';
 import appInfo from '../package.json';
 import getMissingFiles from './utils/file-exists';
 import orangebot from './app';
 import Logger from './utils/logger';
-import { IConfig } from './types/types';
+import { IConfig, IGameConfigs } from './types/types';
 
-const defaultConfigFilepath = './config.json';
+const defaultConfigFilepath = 'config.json';
 
 function printHelp() {
   console.log(
-    'Usage:               node orangebot.js [-i ./filename.json] [-h] [-d]'
+    'Usage:               node {appDir}/index.js [-i ./config-filename.json] [-h] [-d]'
   );
   console.log(
     'Alternative usage:   npm run start -- [-i ./filename.json] [-h] [-d]'
@@ -43,7 +44,7 @@ function parseAndVerifyArgs(args: string[]) {
     Logger.isVerbose = true;
   }
 
-  let configFilepath = parsedArgs.i;
+  let configFilepath;
   if (!parsedArgs.i) {
     configFilepath = defaultConfigFilepath;
   } else if (parsedArgs.i === true) {
@@ -53,19 +54,23 @@ function parseAndVerifyArgs(args: string[]) {
       'Will try to use default config file',
       defaultConfigFilepath
     );
+  } else {
+    configFilepath = parsedArgs.i;
   }
 
-  if (getMissingFiles([configFilepath]).length > 0) {
-    Logger.error('Config file not found:', configFilepath);
+  const defaultConfigFullPath = resolve(process.cwd(), configFilepath);
+
+  if (getMissingFiles([defaultConfigFullPath]).length > 0) {
+    Logger.error('Config file not found:', defaultConfigFullPath);
     process.exit(1);
   }
 
   return configFilepath;
 }
 
-function getMissingGameConfigFiles(config: IConfig) {
-  const configFileNames = Object.keys(config.gameConfigs).map(
-    configName => config.gameConfigs[configName]
+function getMissingGameConfigFiles(gameConfigFiles: IGameConfigs) {
+  const configFileNames = Object.keys(gameConfigFiles).map(configName =>
+    resolve(process.cwd(), './cfg/', gameConfigFiles[configName])
   );
 
   return getMissingFiles(configFileNames);
@@ -74,12 +79,11 @@ function getMissingGameConfigFiles(config: IConfig) {
 (async args => {
   const configFilepath = parseAndVerifyArgs(args.slice(2));
 
-  const config: IConfig = await import(configFilepath);
-  const missingFiles = getMissingGameConfigFiles(config);
-
+  const config: IConfig = await import(resolve(process.cwd(), configFilepath));
+  const missingFiles = getMissingGameConfigFiles(config.gameConfigs);
   if (missingFiles.length > 0) {
     Logger.error(
-      'One or more game config file(s) did not exist:',
+      `${missingFiles} game config file(s) did not exist. Missing files:`,
       missingFiles
     );
     process.exit(1);

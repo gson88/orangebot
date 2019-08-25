@@ -1,69 +1,55 @@
-import dgram, { Socket } from 'dgram';
-import { ChatCommandConstants } from '../constants/chat-commands';
+import regexp from 'named-regexp';
+import dgram, { RemoteInfo, Socket } from 'dgram';
 import Teams from '../constants/teams';
 import Logger from '../utils/logger';
 import * as cleanup from '../utils/node-cleanup';
-import regexp from 'named-regexp';
-import ServerHandler from './ServerHandler';
+import Server from './Server';
 
 export default class SocketHandler {
-  private static socket: Socket = dgram.createSocket('udp4');
-  private serverHandler: ServerHandler;
+  private socket: Socket = dgram.createSocket('udp4');
+  private server: Server;
+  private onSocketMessageCallbacks: Function[] = [];
 
-  constructor(socketPort: number, serverHandler: ServerHandler) {
-    this.serverHandler = serverHandler;
+  constructor(socketPort: number) {
+    this.server = null;
 
-    SocketHandler.socket.bind(socketPort);
-    this.subscribeToEvents();
+    this.socket.bind(socketPort);
+    this.subscribeToSocketEvents();
 
     cleanup.Cleanup(() => {
-      if (SocketHandler.socket) {
+      if (this.socket) {
         Logger.log('Closing socket');
-        SocketHandler.socket.close();
+        this.socket.close();
       }
     });
 
     return this;
   }
 
-  static init(port: number, ip: string) {
-    SocketHandler.socket.send('INIT', port, ip); // SRCDS won't send data if it doesn't get contacted initially
+  addSocketMessageCallback(cb) {
+    this.onSocketMessageCallbacks.push(cb);
   }
 
-  subscribeToEvents() {
-    SocketHandler.socket
-      .on('message', (msg, info) => {
-        const addr = `${info.address}:${info.port}`;
-        const text = msg.toString();
-        const server = this.serverHandler.getServer(addr);
+  init(ip: string, port: number) {
+    Logger.log('socketHandler.init', `${ip}:${port}`);
+    this.socket.send('INIT', port, ip); // SRCDS won't send data if it doesn't get contacted initially
+  }
 
-        if (server === null) {
-          Logger.warning(
-            'Received a socket message for a server that is not in memory',
-            addr
-          );
-          return;
-        }
+  onMessage = (msg: Buffer, info: RemoteInfo) => {
+    this.onSocketMessageCallbacks.map(cb => {
+      cb(msg, info);
+    });
+  };
 
-        Logger.verbose(
-          'Socket message received from serverId',
-          server.serverId
-        );
-
-        SocketHandler.handleTeamJoin(text, server);
-        SocketHandler.handleClantag(text, server);
-        SocketHandler.handlePlayerDisconnect(text, server);
-        SocketHandler.handleMapLoading(text, server);
-        SocketHandler.handleMapLoaded(text, server);
-        SocketHandler.handleRoundStart(text, server);
-        SocketHandler.handleRoundEnd(text, server);
-        SocketHandler.handleGameOver(text, server);
-        this.handleCommand(text, server);
-      })
+  subscribeToSocketEvents() {
+    this.socket
+      .on('message', this.onMessage)
       .on('listening', () => {
-        const address = SocketHandler.socket.address();
+        const address = this.socket.address();
         if (typeof address !== 'string') {
           Logger.log('Socket listening', `${address.address}:${address.port}`);
+        } else {
+          Logger.log('Socket listening', address);
         }
       })
       .on('close', () => {
@@ -75,11 +61,7 @@ export default class SocketHandler {
       });
   }
 
-  /**
-   * @param text
-   * @param {Server.ts} server
-   */
-  static handleTeamJoin(text, server) {
+  static handleTeamJoin(text: string, server: Server) {
     const regex = regexp.named(
       /"(:<user_name>.+)[<](:<user_id>\d+)[>][<](:<steam_id>.*)[>]" switched from team [<](:<user_team>CT|TERRORIST|Unassigned|Spectator)[>] to [<](:<new_team>CT|TERRORIST|Unassigned|Spectator)[>]/
     );
@@ -107,11 +89,7 @@ export default class SocketHandler {
     server.updateLastLog();
   }
 
-  /**
-   * @param text
-   * @param {Server.ts} server
-   */
-  static handleClantag(text, server) {
+  static handleClantag(text: string, server: Server) {
     const regex = regexp.named(
       /"(:<user_name>.+)[<](:<user_id>\d+)[>][<](:<steam_id>.*?)[>][<](:<user_team>CT|TERRORIST|Unassigned|Spectator)[>]" triggered "clantag" \(value "(:<clan_tag>.*)"\)/
     );
@@ -139,11 +117,7 @@ export default class SocketHandler {
     }
   }
 
-  /**
-   * @param text
-   * @param {Server.ts} server
-   */
-  static handlePlayerDisconnect(text, server) {
+  static handlePlayerDisconnect(text: string, server: Server) {
     // player disconnect
     const regex = regexp.named(
       /"(:<user_name>.+)[<](:<user_id>\d+)[>][<](:<steam_id>.*)[>][<](:<user_team>CT|TERRORIST|Unassigned|Spectator)[>]" disconnected/
@@ -156,11 +130,7 @@ export default class SocketHandler {
     }
   }
 
-  /**
-   * @param text
-   * @param {Server.ts} server
-   */
-  static handleMapLoading(text, server) {
+  static handleMapLoading(text: string, server: Server) {
     // map loading
     const regex = regexp.named(/Loading map "(:<map>.*?)"/);
     const match = regex.exec(text);
@@ -170,11 +140,7 @@ export default class SocketHandler {
     }
   }
 
-  /**
-   * @param text
-   * @param {Server.ts} server
-   */
-  static handleMapLoaded(text, server) {
+  static handleMapLoaded(text: string, server: Server) {
     // map started
     const regex = regexp.named(/Started map "(:<map>.*?)"/);
     const match = regex.exec(text);
@@ -184,11 +150,7 @@ export default class SocketHandler {
     }
   }
 
-  /**
-   * @param text
-   * @param {Server.ts} server
-   */
-  static handleRoundStart(text, server) {
+  static handleRoundStart(text: string, server: Server) {
     // round start
     const regex = regexp.named(/World triggered "Round_Start"/);
     const match = regex.exec(text);
@@ -198,11 +160,7 @@ export default class SocketHandler {
     }
   }
 
-  /**
-   * @param text
-   * @param {Server.ts} server
-   */
-  static handleRoundEnd(text, server) {
+  static handleRoundEnd(text: string, server: Server) {
     // round end
     const regex = regexp.named(
       /Team "(:<team>.*)" triggered "SFUI_Notice_(:<team_win>Terrorists_Win|CTs_Win|Target_Bombed|Target_Saved|Bomb_Defused)" \(CT "(:<ct_score>\d+)"\) \(T "(:<t_score>\d+)"\)/
@@ -218,11 +176,7 @@ export default class SocketHandler {
     }
   }
 
-  /**
-   * @param text
-   * @param {Server.ts} server
-   */
-  static handleGameOver(text, server) {
+  static handleGameOver(text: string, server: Server) {
     const regex = regexp.named(/Game Over: competitive/);
     const match = regex.exec(text);
     if (match) {
@@ -231,121 +185,120 @@ export default class SocketHandler {
     }
   }
 
-  /**
-   * @param text
-   * @param {Server.ts} server
-   */
-  handleCommand(text, server) {
-    // !command
-    const regex = regexp.named(
-      /"(:<user_name>.+)[<](:<user_id>\d+)[>][<](:<steam_id>.*)[>][<](:<user_team>CT|TERRORIST|Unassigned|Spectator|Console)[>]" say(:<say_team>_team)? "[!.](:<text>.*)"/
-    );
-    const match = regex.exec(text);
-    if (match) {
-      const isAdmin =
-        match.capture('user_id') === '0' ||
-        server.isAdmin(match.capture('steam_id'));
-      const params = match.capture('text').split(' ');
-      const userTeam = match.capture('user_team');
-      const cmd = params[0];
-      params.shift();
-
-      switch (cmd.toLowerCase()) {
-        case ChatCommandConstants.RESTORE:
-        case ChatCommandConstants.REPLAY:
-          if (isAdmin) {
-            server.restore(params);
-          }
-          break;
-        case ChatCommandConstants.STATUS:
-        case ChatCommandConstants.STATS:
-        case ChatCommandConstants.SCORE:
-        case ChatCommandConstants.SCORES:
-          server.stats(true);
-          break;
-        case ChatCommandConstants.RESTART:
-        case ChatCommandConstants.RESET:
-        case ChatCommandConstants.WARMUP:
-          if (isAdmin) {
-            server.warmup();
-          }
-          break;
-        case ChatCommandConstants.MAPS:
-        case ChatCommandConstants.MAP:
-        case ChatCommandConstants.START:
-        case ChatCommandConstants.MATCH:
-        case ChatCommandConstants.STARTMATCH:
-          if (isAdmin || !server.state.live) {
-            server.start(params);
-          }
-          break;
-        case ChatCommandConstants.FORCE:
-          if (isAdmin) {
-            server.ready(true);
-          }
-          break;
-        case ChatCommandConstants.RESUME:
-        case ChatCommandConstants.READY:
-        case ChatCommandConstants.RDY:
-        case ChatCommandConstants.GABEN:
-        case ChatCommandConstants.R:
-        case ChatCommandConstants.UNPAUSE:
-          server.ready(userTeam);
-          break;
-        case ChatCommandConstants.PAUSE:
-          server.pause(userTeam);
-          break;
-        case ChatCommandConstants.STAY:
-          server.stay(userTeam);
-          break;
-        case ChatCommandConstants.SWAP:
-        case ChatCommandConstants.SWITCH:
-          server.swap(userTeam);
-          break;
-        case ChatCommandConstants.KNIFE:
-          if (isAdmin) {
-            server.knife();
-          }
-          break;
-        case ChatCommandConstants.RECORD:
-          if (isAdmin) {
-            server.record();
-          }
-          break;
-        case ChatCommandConstants.OT:
-        case ChatCommandConstants.OVERTIME:
-          if (isAdmin) {
-            server.overtime();
-          }
-          break;
-        case ChatCommandConstants.FULLMAP:
-          if (isAdmin) {
-            server.fullmap();
-          }
-          break;
-        case ChatCommandConstants.SETTINGS:
-          server.settings();
-          break;
-        case ChatCommandConstants.DISCONNECT:
-        case ChatCommandConstants.QUIT:
-        case ChatCommandConstants.LEAVE:
-          if (isAdmin) {
-            server.quit();
-            this.serverHandler.removeServer(server);
-            Logger.log(server.getIpAndPort() + ' - Disconnected by admin.');
-          }
-          break;
-        case ChatCommandConstants.SAY:
-          if (isAdmin) {
-            server.say(params.join(' '));
-          }
-          break;
-        case ChatCommandConstants.DEBUG:
-          server.debug();
-          break;
-        default:
-      }
-      server.updateLastLog();
-    }
-  }
+  // handleCommand(text: string, server: Server) {
+  //   // !command
+  //   const regex = regexp.named(
+  //     /"(:<user_name>.+)[<](:<user_id>\d+)[>][<](:<steam_id>.*)[>][<](:<user_team>CT|TERRORIST|Unassigned|Spectator|Console)[>]" say(:<say_team>_team)? "[!.](:<text>.*)"/
+  //   );
+  //   const match = regex.exec(text);
+  //   if (!match) {
+  //     return;
+  //   }
+  //
+  //   const userId = match.capture('user_id');
+  //   const steamId = match.capture('steam_id');
+  //   const userTeam = match.capture('user_team');
+  //   const params = match.capture('text').split(' ');
+  //
+  //   const isAdmin = userId === '0' || server.isAdmin(steamId);
+  //   const cmd = params[0];
+  //   params.shift();
+  //
+  //   switch (cmd.toLowerCase()) {
+  //     case ChatCommandConstants.RESTORE:
+  //     case ChatCommandConstants.REPLAY:
+  //       if (isAdmin) {
+  //         server.restore(params);
+  //       }
+  //       break;
+  //     case ChatCommandConstants.STATUS:
+  //     case ChatCommandConstants.STATS:
+  //     case ChatCommandConstants.SCORE:
+  //     case ChatCommandConstants.SCORES:
+  //       server.calculateStats(true);
+  //       break;
+  //     case ChatCommandConstants.RESTART:
+  //     case ChatCommandConstants.RESET:
+  //     case ChatCommandConstants.WARMUP:
+  //       if (isAdmin) {
+  //         server.warmup();
+  //       }
+  //       break;
+  //     case ChatCommandConstants.MAPS:
+  //     case ChatCommandConstants.MAP:
+  //     case ChatCommandConstants.START:
+  //     case ChatCommandConstants.MATCH:
+  //     case ChatCommandConstants.STARTMATCH:
+  //       if (isAdmin || !server.state.live) {
+  //         server.start(params);
+  //       }
+  //       break;
+  //     case ChatCommandConstants.FORCE:
+  //       if (isAdmin) {
+  //         server.ready(null);
+  //       }
+  //       break;
+  //     case ChatCommandConstants.RESUME:
+  //     case ChatCommandConstants.READY:
+  //     case ChatCommandConstants.RDY:
+  //     case ChatCommandConstants.GABEN:
+  //     case ChatCommandConstants.R:
+  //     case ChatCommandConstants.UNPAUSE:
+  //       server.ready(userTeam);
+  //       break;
+  //     case ChatCommandConstants.PAUSE:
+  //       server.pause();
+  //       break;
+  //     case ChatCommandConstants.STAY:
+  //       server.stay(userTeam);
+  //       break;
+  //     case ChatCommandConstants.SWAP:
+  //     case ChatCommandConstants.SWITCH:
+  //       server.swap(userTeam);
+  //       break;
+  //     case ChatCommandConstants.KNIFE:
+  //       if (isAdmin) {
+  //         server.knife();
+  //       }
+  //       break;
+  //     case ChatCommandConstants.RECORD:
+  //       if (isAdmin) {
+  //         server.record();
+  //       }
+  //       break;
+  //     case ChatCommandConstants.OT:
+  //     case ChatCommandConstants.OVERTIME:
+  //       if (isAdmin) {
+  //         server.overtime();
+  //       }
+  //       break;
+  //     case ChatCommandConstants.FULLMAP:
+  //       if (isAdmin) {
+  //         server.fullmap();
+  //       }
+  //       break;
+  //     case ChatCommandConstants.SETTINGS:
+  //       server.settings();
+  //       break;
+  //     case ChatCommandConstants.DISCONNECT:
+  //     case ChatCommandConstants.QUIT:
+  //     case ChatCommandConstants.LEAVE:
+  //       if (isAdmin) {
+  //         server.quit();
+  //         this.serverHandler.removeServer(server);
+  //         Logger.log(server.getIpAndPort() + ' - Disconnected by admin.');
+  //       }
+  //       break;
+  //     case ChatCommandConstants.SAY:
+  //       if (isAdmin) {
+  //         server.say(params.join(' '));
+  //       }
+  //       break;
+  //     case ChatCommandConstants.DEBUG:
+  //       server.debug();
+  //       break;
+  //     default:
+  //   }
+  //   server.updateLastLog();
+  // }
 }
