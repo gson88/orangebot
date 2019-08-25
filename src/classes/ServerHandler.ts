@@ -1,4 +1,5 @@
 import Server from './Server';
+import Logger from '../utils/logger';
 
 export default class ServerHandler {
   servers: { [ipAndPort: string]: Server } = {};
@@ -21,6 +22,7 @@ export default class ServerHandler {
   };
 
   getServerWithIpAndPort = (ipAndPort: string): Server | undefined => {
+    Logger.verbose('Getting server with ipAndPort:', ipAndPort);
     return this.servers[ipAndPort];
   };
 
@@ -28,7 +30,7 @@ export default class ServerHandler {
     Object.values(this.servers)
       .filter(server => server.commandQueue.length > 0)
       .forEach(async server => {
-        await server.execRconCommand(server.commandQueue.shift());
+        await server.getRcon().execRconCommand(server.commandQueue.shift());
       });
   };
 }

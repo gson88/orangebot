@@ -1,34 +1,35 @@
 import fs from 'fs';
-import RCon from 'simple-rcon';
 import regexp from 'named-regexp';
 import id64 from '../utils/steam-id-64';
-import {
-  formatString,
-  cleanString,
-  cleanChatString
-} from '../utils/string-utils';
+import { formatString, cleanString } from '../utils/string-utils';
 import Logger from '../utils/logger';
 import TeamConstants from '../constants/teams';
 import Commands from '../constants/rcon-commands';
 import SocketMessages from '../constants/socket-message-regexes';
 import ChatCommandConstants from '../constants/chat-commands';
 import ServerState from './ServerState';
-import { IDefaultConfig, IGameConfigs, IServerConfig } from '../types/types';
+import RCon from './RCon';
+import {
+  IDefaultConfig,
+  IGameConfigs,
+  IServerConfig,
+  NamedRegexMatches
+} from '../types/types';
 
 //Todo: Prevent memory leaks / remove existing timeouts when removing server
 export default class Server {
   static nrInstances = 0;
-  ip: string;
-  port: number;
-  rconpass: string;
-  serverId: number;
-  admins: string[] = [];
+  private admins: string[] = [];
+  private state: ServerState;
+  private defaultSettings: IDefaultConfig;
+  private configFiles: IGameConfigs;
+  private readonly host: string;
+  private readonly port: number;
+  private readonly rcon: RCon;
+  private readyTimer: NodeJS.Timeout = null;
+  private pauseTimer: NodeJS.Timeout = null;
+  readonly serverId: number;
   commandQueue: string[] = [];
-  rconConnection: any = null;
-  rconPromise: Promise<any> = null;
-  state: ServerState;
-  defaultSettings: IDefaultConfig;
-  configFiles: IGameConfigs;
 
   constructor(
     serverConfig: IServerConfig,
@@ -40,13 +41,13 @@ export default class Server {
       rconpass: '*********'
     });
 
-    this.ip = serverConfig.host;
+    this.host = serverConfig.host;
     this.port = serverConfig.port;
-    this.rconpass = serverConfig.rconpass;
     this.serverId = Server.nrInstances++;
     this.defaultSettings = defaults;
     this.configFiles = gameConfigs;
     this.state = new ServerState({ ...defaults });
+    this.rcon = new RCon(this.host, this.port, serverConfig.rconpass);
   }
 
   setAdmins(admins: string[]): Server {
@@ -54,79 +55,29 @@ export default class Server {
     return this;
   }
 
-  async getRconConnection() {
-    Logger.log('getRconConnection');
-
-    if (this.rconPromise) {
-      Logger.log('Waiting for promise');
-      return this.rconPromise;
-    }
-
-    if (this.rconConnection) {
-      return this.rconConnection;
-    }
-
-    await this.createRconConnection();
-    return this.rconConnection;
-  }
-
-  async createRconConnection() {
-    Logger.verbose('createRconConnection');
-    this.rconConnection = new RCon({
-      host: this.ip,
-      port: this.port,
-      password: this.rconpass,
-      connect: true
-      // timeout: 20000
-    })
-      .on('error', err => {
-        Logger.error('Rcon error');
-        throw err;
-      })
-      .on('disconnected', a => {
-        Logger.log('Rcon disconnected', a);
-        this.rconConnection = null;
-      });
-
-    this.rconPromise = new Promise(resolve => {
-      this.rconConnection.on('connected', () => {
-        Logger.log('Rcon connected');
-        this.rconPromise = null;
-        resolve(this.rconConnection);
-      });
-    });
-
-    return this.rconPromise;
-  }
-
   getIpAndPort(): string {
-    return `${this.ip}:${this.port}`;
+    return `${this.host}:${this.port}`;
   }
 
-  updateLastLog(): void {
-    this.state.updateLastLog();
-  }
+  getRcon = (): RCon => {
+    return this.rcon;
+  };
 
-  whitelistSocket(socketIp: string, socketPort: number) {
-    this.addToCommandQueue(
-      formatString(Commands.WHITELIST_ADDRESS, socketIp, socketIp, socketPort)
-    );
+  whitelistSocket(socketIp: string, socketPort: number): Server {
+    this.addToCommandQueue(Commands.WHITELIST_ADDRESS, socketIp, socketPort);
     return this;
   }
 
   async startServer() {
-    await this.getGameStatus();
-
+    await this.getCurrentMap();
     this.addToCommandQueue(Commands.SAY_WELCOME);
     return this;
   }
 
-  addToCommandQueue(commands: string) {
-    if (!commands) {
-      return;
-    }
-
-    const trimmedCommands = commands.split(';').map(cmd => cmd.trim());
+  addToCommandQueue(commands: string, ...stringReplacements: any[]): void {
+    const trimmedCommands = formatString(commands, ...stringReplacements)
+      .split(';')
+      .map(cmd => cmd.trim());
     // .reduce((acc: any, curr: any) => {
     //   if (
     //     acc.length === 0 ||
@@ -143,16 +94,6 @@ export default class Server {
     this.commandQueue = this.commandQueue.concat(trimmedCommands);
   }
 
-  async execRconCommand(command: string) {
-    Logger.log('Will send command:');
-    const conn = await this.getRconConnection();
-
-    Logger.log('Sending command:', command);
-    conn.exec(command, resp => {
-      Logger.log('rcon response', resp.body.split('\n'));
-    });
-  }
-
   clantag(team: TeamConstants) {
     const tags = {};
     let ret = 'mix1';
@@ -164,7 +105,7 @@ export default class Server {
     }
 
     for (const i in this.state.players) {
-      const player = this.state.getPlayer(i);
+      const player = this.state.players[i];
 
       if (player.team === team && player.clantag !== undefined) {
         if (tags[player.clantag] === undefined) {
@@ -189,74 +130,68 @@ export default class Server {
     return ret;
   }
 
-  isAdmin(steamid: string) {
-    return this.admins.indexOf(id64(steamid)) >= 0;
+  isAdmin(steamId: string) {
+    return this.admins.indexOf(id64(steamId)) >= 0;
   }
 
-  calculateStats(printInChat: boolean): void {
-    const team1 = this.clantag(TeamConstants.TERRORIST);
-    const team2 = this.clantag(TeamConstants.CT);
-    const stat = {
-      [team1]: [],
-      [team2]: []
-    };
-    for (const mapIndex in this.state.maps) {
-      if (this.state.score[this.state.maps[mapIndex]] !== undefined) {
-        if (this.state.score[this.state.maps[mapIndex]][team1] !== undefined) {
-          stat[team1][mapIndex] = this.state.score[this.state.maps[mapIndex]][
-            team1
-          ];
-        } else {
-          stat[team1][mapIndex] = 'x';
-        }
-        if (this.state.score[this.state.maps[mapIndex]][team2] !== undefined) {
-          stat[team2][mapIndex] = this.state.score[this.state.maps[mapIndex]][
-            team2
-          ];
-        } else {
-          stat[team2][mapIndex] = 'x';
-        }
-      } else {
-        stat[team1][mapIndex] = 'x';
-        stat[team2][mapIndex] = 'x';
-      }
-    }
-    const maps = [];
-    const scores = { team1: 0, team2: 0 };
-    for (const mapIndex in this.state.maps) {
-      maps.push(
-        this.state.maps[mapIndex] +
-          ' ' +
-          stat[team1][mapIndex] +
-          '-' +
-          stat[team2][mapIndex]
-      );
-
-      if (this.state.maps[mapIndex] !== this.state.map) {
-        if (stat[team1][mapIndex] > stat[team2][mapIndex]) {
-          scores.team1 += 1;
-        } else if (stat[team1][mapIndex] < stat[team2][mapIndex]) {
-          scores.team2 += 1;
-        }
-      }
-    }
-
-    const chat = '\x10' + team1 + ' [\x06' + maps.join(', ') + '\x10] ' + team2;
-    if (printInChat) {
-      this.addToCommandQueue(formatString(Commands.SAY, chat));
-    } else {
-      const index = this.state.maps.indexOf(this.state.map);
-      this.addToCommandQueue(
-        formatString(
-          Commands.GOTV_OVERLAY,
-          index + 1,
-          this.state.maps.length,
-          scores.team1,
-          scores.team2
-        )
-      );
-    }
-  }
+  // calculateStats(printInChat: boolean): void {
+  //   const team1 = this.clantag(TeamConstants.TERRORIST);
+  //   const team2 = this.clantag(TeamConstants.CT);
+  //   const stat = {
+  //     [team1]: [],
+  //     [team2]: []
+  //   };
+  //   for (const mapIndex in this.state.maps) {
+  //     const map = this.state.maps[mapIndex];
+  //     if (this.state.score[map] !== undefined) {
+  //       if (this.state.score[map][team1] !== undefined) {
+  //         stat[team1][mapIndex] = this.state.score[map][team1];
+  //       } else {
+  //         stat[team1][mapIndex] = 'x';
+  //       }
+  //       if (this.state.score[map][team2] !== undefined) {
+  //         stat[team2][mapIndex] = this.state.score[map][team2];
+  //       } else {
+  //         stat[team2][mapIndex] = 'x';
+  //       }
+  //     } else {
+  //       stat[team1][mapIndex] = 'x';
+  //       stat[team2][mapIndex] = 'x';
+  //     }
+  //   }
+  //   const maps = [];
+  //   const scores = { team1: 0, team2: 0 };
+  //   for (const mapIndex in this.state.maps) {
+  //     const map = this.state.maps[mapIndex];
+  //     maps.push(
+  //       map + ' ' + stat[team1][mapIndex] + '-' + stat[team2][mapIndex]
+  //     );
+  //
+  //     if (map !== this.state.map) {
+  //       if (stat[team1][mapIndex] > stat[team2][mapIndex]) {
+  //         scores.team1 += 1;
+  //       } else if (stat[team1][mapIndex] < stat[team2][mapIndex]) {
+  //         scores.team2 += 1;
+  //       }
+  //     }
+  //   }
+  //
+  //   const chat = '\x10' + team1 + ' [\x06' + maps.join(', ') + '\x10] ' + team2;
+  //   if (printInChat) {
+  //     this.addToCommandQueue(formatString(Commands.SAY, chat));
+  //   } else {
+  //     const index = this.state.maps.indexOf(this.state.map);
+  //     this.addToCommandQueue(
+  //       formatString(
+  //         Commands.GOTV_OVERLAY,
+  //         index + 1,
+  //         this.state.maps.length,
+  //         scores.team1,
+  //         scores.team2
+  //       )
+  //     );
+  //   }
+  // }
 
   restore(round) {
     let roundNum: number | string = parseInt(round);
@@ -264,34 +199,39 @@ export default class Server {
       roundNum = '0' + String(roundNum);
     }
     this.addToCommandQueue(
-      formatString(Commands.RESTORE_ROUND, `backup_round${roundNum}.txt`, round)
+      Commands.RESTORE_ROUND,
+      `backup_round${roundNum}.txt`,
+      round
     );
 
     this.sendFiveSecondCountdownInChat(Commands.SAY_LIVE + ';mp_unpause_match');
   }
 
-  sendFiveSecondCountdownInChat(finalMessage: string = null) {
+  sendFiveSecondCountdownInChat(
+    finalCommand: string = null,
+    ...finalCommandReplacements: (string | number)[]
+  ) {
     setTimeout(() => {
-      this.addToCommandQueue('say \x054...');
+      this.say('\x054...');
     }, 1000);
     setTimeout(() => {
-      this.addToCommandQueue('say \x063...');
+      this.say('\x063...');
     }, 2000);
     setTimeout(() => {
-      this.addToCommandQueue('say \x102...');
+      this.say('\x102...');
     }, 3000);
     setTimeout(() => {
-      this.addToCommandQueue('say \x0f1...');
+      this.say('\x0f1...');
     }, 4000);
 
-    if (finalMessage) {
+    if (finalCommand) {
       setTimeout(() => {
-        this.addToCommandQueue(finalMessage);
+        this.addToCommandQueue(finalCommand, ...finalCommandReplacements);
       }, 5000);
     }
   }
 
-  round() {
+  roundStarted() {
     this.state.freeze = false;
     this.state.paused = false;
     this.addToCommandQueue(Commands.ROUND_STARTED);
@@ -299,6 +239,7 @@ export default class Server {
 
   pause() {
     if (!this.state.live) {
+      Logger.log('Cant pause game when game is not live');
       return;
     }
 
@@ -309,10 +250,8 @@ export default class Server {
 
     this.addToCommandQueue(Commands.PAUSE_ENABLED);
     this.state.paused = true;
-    this.state.unpause = {
-      [TeamConstants.TERRORIST]: false,
-      [TeamConstants.CT]: false
-    };
+    this.state.unpause[TeamConstants.TERRORIST] = false;
+    this.state.unpause[TeamConstants.CT] = false;
 
     if (this.state.freeze) {
       this.matchPause();
@@ -327,43 +266,37 @@ export default class Server {
     }
 
     if (this.state.pause_time) {
-      clearTimeout(this.state.pauses.timer);
-      this.state.pauses.timer = setTimeout(() => {
+      clearTimeout(this.pauseTimer);
+      this.pauseTimer = setTimeout(() => {
         this.addToCommandQueue(Commands.SAY_PAUSE_TIMEOUT);
-        this.state.pauses.timer = setTimeout(() => {
+        this.pauseTimer = setTimeout(() => {
           this.ready(null);
         }, 20 * 1000);
       }, (this.state.pause_time - 20) * 1000);
-      this.addToCommandQueue(
-        formatString(Commands.SAY_PAUSE_TIME, this.state.pause_time)
-      );
+      this.addToCommandQueue(Commands.SAY_PAUSE_TIME, this.state.pause_time);
     }
   }
 
-  async getGameStatus() {
-    const conn = await this.getRconConnection();
-    conn.exec('status', res => {
-      const regex = regexp.named(/map\s+:\s+(:<map>.*?)\s/);
-      const match = regex.exec(res.body);
-      if (match === null) {
-        return;
-      }
+  async getCurrentMap() {
+    const res = await this.rcon.execRconCommand('status');
+    const regex = regexp.named(/map\s+:\s+(:<map>.*?)\s/);
+    const match = regex.exec(res.body);
+    if (match === null) {
+      return;
+    }
 
-      this.state.map = match.capture('map');
-    });
+    this.state.map = match.capture('map');
   }
 
   start(maps) {
-    this.state.score = [];
+    this.state.score = {};
     if (maps.length > 0) {
       this.state.maps = maps;
 
       this.state.mapindex = 0;
 
       if (this.state.map !== maps[0]) {
-        this.addToCommandQueue(
-          formatString(Commands.CHANGE_MAP, this.state.maps[0])
-        );
+        this.addToCommandQueue(Commands.CHANGE_MAP, this.state.maps[0]);
       } else {
         this.newmap(maps[0], 0);
       }
@@ -371,63 +304,55 @@ export default class Server {
       this.state.maps = [];
       this.newmap(this.state.map, 0);
       setTimeout(() => {
-        this.getGameStatus();
+        this.getCurrentMap();
       }, 1000);
     }
   }
 
-  ready(team: string | null) {
+  ready(team: TeamConstants | null) {
+    const terroristsUnpause = this.state.unpause[TeamConstants.TERRORIST];
+    const ctUnpause = this.state.unpause[TeamConstants.CT];
+    const terroristsReady = this.state.ready[TeamConstants.TERRORIST];
+    const ctReady = this.state.ready[TeamConstants.CT];
     if (this.state.live && this.state.paused) {
       if (team === null) {
-        this.state.unpause.TERRORIST = true;
-        this.state.unpause.CT = true;
+        this.state.unpause[TeamConstants.TERRORIST] = true;
+        this.state.unpause[TeamConstants.CT] = true;
       } else {
         this.state.unpause[team] = true;
       }
-      if (this.state.unpause.TERRORIST !== this.state.unpause.CT) {
+      if (terroristsUnpause !== ctUnpause) {
         this.addToCommandQueue(
-          formatString(
-            Commands.SAY_TEAM_READY,
-            this.state.unpause.TERRORIST ? Commands.T : Commands.CT,
-            this.state.unpause.TERRORIST ? Commands.CT : Commands.T
-          )
+          Commands.SAY_TEAM_READY,
+          terroristsUnpause ? Commands.T : Commands.CT,
+          terroristsUnpause ? Commands.CT : Commands.T
         );
-      } else if (
-        this.state.unpause.TERRORIST === true &&
-        this.state.unpause.CT === true
-      ) {
-        if ('timer' in this.state.pauses) {
-          clearTimeout(this.state.pauses.timer);
+      } else if (terroristsUnpause && ctUnpause) {
+        if (this.pauseTimer) {
+          clearTimeout(this.pauseTimer);
         }
         this.addToCommandQueue(Commands.MATCH_UNPAUSE);
         this.state.paused = false;
-        this.state.unpause = {
-          [TeamConstants.TERRORIST]: false,
-          [TeamConstants.CT]: false
-        };
+        this.state.unpause[TeamConstants.TERRORIST] = false;
+        this.state.unpause[TeamConstants.CT] = false;
       }
     } else if (!this.state.live) {
       if (team === null) {
-        this.state.ready.TERRORIST = true;
-        this.state.ready.CT = true;
+        this.state.ready[TeamConstants.TERRORIST] = true;
+        this.state.ready[TeamConstants.CT] = true;
       } else {
         this.state.ready[team] = true;
       }
-      if (this.state.ready.TERRORIST !== this.state.ready.CT) {
+      if (terroristsReady !== ctReady) {
         this.addToCommandQueue(
-          formatString(
-            Commands.SAY_TEAM_READY,
-            this.state.ready.TERRORIST ? Commands.T : Commands.CT,
-            this.state.ready.TERRORIST ? Commands.CT : Commands.T
-          )
+          Commands.SAY_TEAM_READY,
+          terroristsReady ? Commands.T : Commands.CT,
+          terroristsReady ? Commands.CT : Commands.T
         );
-      } else if (
-        this.state.ready.TERRORIST === true &&
-        this.state.ready.CT === true
-      ) {
+      } else if (terroristsReady && ctReady === true) {
         this.state.live = true;
-        if (this.state.ready.timer) {
-          clearTimeout(this.state.ready.timer);
+        if (this.readyTimer) {
+          clearTimeout(this.readyTimer);
         }
         if (this.state.knife) {
           this.addToCommandQueue(this.getConfig(this.configFiles.knife));
@@ -455,7 +380,7 @@ export default class Server {
       this.state.map = map;
     }
     setTimeout(() => {
-      this.calculateStats(false);
+      // this.calculateStats(false);
       this.warmup();
       this.startReadyTimer();
     }, delay);
@@ -473,8 +398,8 @@ export default class Server {
     } else {
       this.state.knife = false;
       this.addToCommandQueue(Commands.SAY_KNIFE_DISABLED);
-      if ('timer' in this.state.ready) {
-        clearTimeout(this.state.ready.timer);
+      if (this.readyTimer) {
+        clearTimeout(this.readyTimer);
       }
     }
   }
@@ -495,23 +420,13 @@ export default class Server {
 
   settings() {
     this.addToCommandQueue(Commands.SAY_SETTINGS);
-    this.addToCommandQueue(
-      formatString(Commands.SAY_SETTINGS_KNIFE, this.state.knife)
-    );
-    this.addToCommandQueue(
-      formatString(Commands.SAY_SETTINGS_RECORDING, this.state.record)
-    );
-    this.addToCommandQueue(
-      formatString(Commands.SAY_SETTINGS_OT, this.state.ot)
-    );
-    this.addToCommandQueue(
-      formatString(Commands.SAY_SETTINGS_FULLMAP, this.state.fullmap)
-    );
+    this.addToCommandQueue(Commands.SAY_SETTINGS_KNIFE, this.state.knife);
+    this.addToCommandQueue(Commands.SAY_SETTINGS_RECORDING, this.state.record);
+    this.addToCommandQueue(Commands.SAY_SETTINGS_OT, this.state.ot);
+    this.addToCommandQueue(Commands.SAY_SETTINGS_FULLMAP, this.state.fullmap);
 
     const outputMaps = this.state.maps.join(', ');
-    this.addToCommandQueue(
-      formatString(Commands.SAY_SETTINGS_MAPS, outputMaps)
-    );
+    this.addToCommandQueue(Commands.SAY_SETTINGS_MAPS, outputMaps);
   }
 
   mapend() {
@@ -519,9 +434,7 @@ export default class Server {
     this.state.mapindex++;
     if (this.state.record === true) {
       this.addToCommandQueue('tv_stoprecord');
-      this.addToCommandQueue(
-        formatString(Commands.SAY_DEMO_FINISHED, this.state.demoname)
-      );
+      this.addToCommandQueue(Commands.SAY_DEMO_FINISHED, this.state.demoname);
     }
 
     if (
@@ -535,45 +448,42 @@ export default class Server {
       this.state.maps.length > this.state.mapindex
     ) {
       this.addToCommandQueue(
-        formatString(
-          Commands.SAY_MAP_CHANGE,
-          this.state.maps[this.state.mapindex]
-        )
+        Commands.SAY_MAP_CHANGE,
+        this.state.maps[this.state.mapindex]
       );
       setTimeout(() => {
         this.addToCommandQueue(
-          'changelevel ' + this.state.maps[this.state.mapindex]
+          Commands.CHANGE_MAP,
+          this.state.maps[this.state.mapindex]
         );
       }, 20000);
     }
   }
 
   overtime() {
-    if (this.state.ot === true) {
+    if (this.state.ot) {
       this.state.ot = false;
-      this.addToCommandQueue(Commands.SAY_OT_DISABLED);
-      this.addToCommandQueue('mp_overtime_enable 0');
+      this.addToCommandQueue(Commands.DISALBE_OT);
     } else {
       this.state.ot = true;
-      this.addToCommandQueue(Commands.SAY_OT_ENABLED);
+      this.addToCommandQueue(Commands.ENABLE_OT);
       this.addToCommandQueue(this.getConfig(this.configFiles.overtime));
     }
   }
 
   fullmap() {
-    if (this.state.fullmap === true) {
-      this.state.fullmap = false;
+    if (this.state.fullmap) {
       this.addToCommandQueue(Commands.SAY_FM_DISABLED);
       this.addToCommandQueue('mp_match_can_clinch 1');
     } else {
-      this.state.fullmap = true;
       this.addToCommandQueue(Commands.SAY_FM_ENABLED);
       this.addToCommandQueue(this.getConfig(this.configFiles.fullmap));
     }
+    this.state.fullmap = !this.state.fullmap;
   }
 
   startrecord() {
-    if (this.state.record === true) {
+    if (this.state.record) {
       const dateString = new Date()
         .toISOString()
         .replace(/T/, '_')
@@ -585,7 +495,7 @@ export default class Server {
 
       this.state.demoname = demoname;
       this.addToCommandQueue('tv_stoprecord; tv_record ' + demoname);
-      this.addToCommandQueue(formatString(Commands.SAY_DEMO_REC, demoname));
+      this.addToCommandQueue(Commands.SAY_DEMO_REC, demoname);
     }
   }
 
@@ -595,18 +505,16 @@ export default class Server {
   }
 
   lo3() {
-    this.addToCommandQueue(
-      'say \x02The Match will be live on the third restart.'
-    );
-    this.addToCommandQueue('mp_restartgame 1');
+    this.say('\x02The Match will be live on the third restart.');
+    this.addToCommandQueue(Commands.RESTART_MAP, 1);
     setTimeout(() => {
-      this.addToCommandQueue('mp_restartgame 1');
+      this.addToCommandQueue(Commands.RESTART_MAP, 1);
     }, 1000);
     setTimeout(() => {
-      this.addToCommandQueue('mp_restartgame 3');
+      this.addToCommandQueue(Commands.RESTART_MAP, 3);
     }, 2000);
     setTimeout(() => {
-      this.addToCommandQueue('say \x04Match is live!');
+      this.say('\x04Match is live!');
     }, 6000);
   }
 
@@ -615,39 +523,35 @@ export default class Server {
       return;
     }
 
-    if ('timer' in this.state.ready) {
-      clearTimeout(this.state.ready.timer);
+    if (this.readyTimer) {
+      clearTimeout(this.readyTimer);
     }
 
-    this.addToCommandQueue(
-      formatString(Commands.SAY_WARMUP_TIME, this.state.ready_time)
-    );
-    this.state.ready.timer = setTimeout(() => {
+    this.addToCommandQueue(Commands.SAY_WARMUP_TIME, this.state.ready_time);
+    this.readyTimer = setTimeout(() => {
       this.addToCommandQueue(Commands.SAY_WARMUP_TIMEOUT);
-      this.state.ready.timer = setTimeout(() => {
+      this.readyTimer = setTimeout(() => {
         this.ready(null);
       }, 20 * 1000);
     }, (this.state.ready_time - 20) * 1000);
   }
 
-  score(score) {
+  score(tScore: number, ctScore: number) {
     this.state.score[this.state.map] = {
-      [this.clantag(TeamConstants.CT)]: score.CT,
-      [this.clantag(TeamConstants.TERRORIST)]: score.TERRORIST
+      [this.clantag(TeamConstants.TERRORIST)]: tScore,
+      [this.clantag(TeamConstants.CT)]: ctScore
     };
-    this.calculateStats(false);
-    if (score.TERRORIST + score.CT === 1 && this.state.knife) {
+    // this.calculateStats(false);
+    if (tScore + ctScore === 1 && this.state.knife) {
       this.state.knifewinner =
-        score.TERRORIST === 1 ? TeamConstants.TERRORIST : TeamConstants.CT;
+        tScore === 1 ? TeamConstants.TERRORIST : TeamConstants.CT;
       this.state.knife = false;
       this.addToCommandQueue(this.getConfig(this.configFiles.match));
       this.addToCommandQueue(
-        formatString(
-          Commands.KNIFE_WON,
-          this.state.knifewinner === TeamConstants.TERRORIST
-            ? Commands.T
-            : Commands.CT
-        )
+        Commands.KNIFE_WON,
+        this.state.knifewinner === TeamConstants.TERRORIST
+          ? Commands.T
+          : Commands.CT
       );
     } else if (this.state.paused) {
       this.matchPause();
@@ -655,7 +559,7 @@ export default class Server {
     this.state.freeze = true;
   }
 
-  stay(team) {
+  stay(team: TeamConstants) {
     if (team === this.state.knifewinner) {
       this.addToCommandQueue(Commands.KNIFE_STAY);
       this.state.knifewinner = null;
@@ -674,41 +578,37 @@ export default class Server {
   }
 
   quit() {
-    this.addToCommandQueue('say \x10Goodbye from OrangeBot');
-    this.addToCommandQueue('logaddress_delall; log off');
+    this.say('\x10Goodbye from OrangeBot');
+    this.addToCommandQueue(Commands.REMOVE_WHITELIST_ADDRESS);
 
-    //Todo: Make sure there is no memory leaks
+    //Todo: Make sure there are no memory leaks
     //Todo: Advertise to serverHandler that this server has shut down
   }
 
   debug() {
-    this.addToCommandQueue(
-      `say \x10live: ${this.state.live}` +
+    this.say(
+      `\x10live: ${this.state.live}` +
         ` paused: ${this.state.paused}` +
         ` freeze: ${this.state.freeze}` +
         ` knife: ${this.state.knife}` +
         ` knifewinner: ${this.state.knifewinner}` +
-        ` ready: T: ${this.state.ready.TERRORIST}` +
-        ` ready: CT: ${this.state.ready.CT}` +
-        ` unpause: T: ${this.state.unpause.TERRORIST}` +
-        `unpause: CT: ${this.state.unpause.CT}`
+        ` ready T: ${this.state.ready.TERRORIST}` +
+        ` ready CT: ${this.state.ready.CT}` +
+        ` unpause T: ${this.state.unpause.TERRORIST}` +
+        ` unpause CT: ${this.state.unpause.CT}`
     );
-    this.calculateStats(true);
+    // this.calculateStats(true);
   }
 
-  say(msg) {
-    this.addToCommandQueue(formatString(Commands.SAY, cleanChatString(msg)));
+  say(msg: string) {
+    this.addToCommandQueue(Commands.SAY, msg);
   }
 
   warmup() {
-    this.state.ready = {
-      [TeamConstants.TERRORIST]: false,
-      [TeamConstants.CT]: false
-    };
-    this.state.unpause = {
-      [TeamConstants.TERRORIST]: false,
-      [TeamConstants.CT]: false
-    };
+    this.state.ready[TeamConstants.TERRORIST] = false;
+    this.state.ready[TeamConstants.CT] = false;
+    this.state.unpause[TeamConstants.TERRORIST] = false;
+    this.state.unpause[TeamConstants.CT] = false;
     this.state.live = false;
     this.state.paused = false;
     this.state.freeze = false;
@@ -731,8 +631,8 @@ export default class Server {
     this.addToCommandQueue(Commands.SAY_WARMUP);
   }
 
-  handleSocketMessage(text: string) {
-    const found = this.handle(text, [
+  onSocketMessage(text: string) {
+    const found = this.handleSocketMessage(text, [
       [SocketMessages.TEAM_JOIN, this.handleTeamJoin],
       [SocketMessages.CLANTAG, this.handleClantag],
       [SocketMessages.PLAYER_DISCONNECT, this.handlePlayerDisconnect],
@@ -745,11 +645,14 @@ export default class Server {
     ]);
 
     if (found) {
-      this.updateLastLog();
+      this.state.updateLastLog();
     }
   }
 
-  handle = (text: string, toTest: any[]) => {
+  handleSocketMessage = (
+    text: string,
+    toTest: [RegExp, (match: NamedRegexMatches) => void][]
+  ) => {
     return toTest.find(([regexTest, cb]) => {
       const regex = regexp.named(regexTest);
       const match = regex.exec(text);
@@ -761,88 +664,80 @@ export default class Server {
     });
   };
 
-  handleTeamJoin = (match: any) => {
+  handleTeamJoin = (match: NamedRegexMatches) => {
     const steamId = match.capture('steam_id');
+    const newTeam = match.capture('new_team');
+    const name = match.capture('user_name');
 
     const player = this.state.getPlayer(steamId);
-    if (!player) {
-      if (match.capture('steam_id') !== 'BOT') {
-        this.state.addPlayer(
-          steamId,
-          match.capture('new_team'),
-          match.capture('user_name')
-        );
-      }
-    } else {
-      player.team = match.capture('new_team');
-      player.name = match.capture('user_name');
+    if (player) {
+      player.team = newTeam;
+      player.name = name;
+    } else if (steamId !== 'BOT') {
+      this.state.addPlayer(steamId, newTeam, name);
     }
   };
 
-  handleClantag = (match: any) => {
+  handleClantag = (match: NamedRegexMatches) => {
     const steamId = match.capture('steam_id');
+    const userTeam = match.capture('user_team');
+    const userName = match.capture('user_name');
+    const clanTag = match.capture('clan_tag');
     const player = this.state.getPlayer(steamId);
 
+    if (steamId === 'BOT') {
+      return;
+    }
+
     if (!player) {
-      if (match.capture('steam_id') !== 'BOT') {
-        this.state.addPlayer(
-          steamId,
-          match.capture('user_team'),
-          match.capture('user_name'),
-          match.capture('clan_tag')
-        );
-      }
+      this.state.addPlayer(steamId, userTeam, userName, clanTag);
     } else {
-      player.clantag =
-        match.capture('clan_tag') !== ''
-          ? match.capture('clan_tag')
-          : undefined;
+      player.clantag = clanTag || undefined;
     }
   };
 
-  handlePlayerDisconnect = (match: any) => {
-    const steamId = match.capture('steam_id');
-    this.state.deletePlayer(steamId);
+  handlePlayerDisconnect = (match: NamedRegexMatches) => {
+    this.state.deletePlayer(match.capture('steam_id'));
   };
 
   handleMapLoading = () => {
     this.state.clearPlayers();
   };
 
-  handleMapLoaded = (match: any) => {
+  handleMapLoaded = (match: NamedRegexMatches) => {
     this.newmap(match.capture('map'));
   };
 
   handleRoundStart = () => {
-    this.round();
+    this.roundStarted();
   };
 
-  handleRoundEnd = (match: any) => {
-    const score = {
-      [TeamConstants.TERRORIST]: parseInt(match.capture('t_score')),
-      [TeamConstants.CT]: parseInt(match.capture('ct_score'))
-    };
-    this.score(score);
+  handleRoundEnd = (match: NamedRegexMatches) => {
+    const tScore = parseInt(match.capture('t_score'));
+    const ctScore = parseInt(match.capture('ct_score'));
+    this.score(tScore, ctScore);
   };
 
   handleGameOver = () => {
     this.mapend();
   };
 
-  handleAdminCommand = (match: any) => {
+  handleAdminCommand = (match: NamedRegexMatches) => {
     // !-command
     const userId = match.capture('user_id');
     const steamId = match.capture('steam_id');
     const userTeam = match.capture('user_team');
     const params = match.capture('text').split(' ');
 
-    const isAdmin = userId === '0' || this.isAdmin(steamId);
+    const isAdmin = this.isAdmin(steamId) || userId === '0';
     const cmd = params[0];
     params.shift();
 
     switch (cmd.toLowerCase()) {
       case ChatCommandConstants.CMD:
-        this.addToCommandQueue(params.join(' '));
+        if (isAdmin) {
+          this.addToCommandQueue(params.join(' '));
+        }
         break;
 
       case ChatCommandConstants.RESTORE:
@@ -856,7 +751,7 @@ export default class Server {
       case ChatCommandConstants.STATS:
       case ChatCommandConstants.SCORE:
       case ChatCommandConstants.SCORES:
-        this.calculateStats(true);
+        // this.calculateStats(true);
         break;
 
       case ChatCommandConstants.RESTART:
@@ -889,7 +784,7 @@ export default class Server {
       case ChatCommandConstants.GABEN:
       case ChatCommandConstants.R:
       case ChatCommandConstants.UNPAUSE:
-        this.ready(userTeam);
+        this.ready(userTeam as TeamConstants);
         break;
 
       case ChatCommandConstants.PAUSE:
@@ -897,12 +792,12 @@ export default class Server {
         break;
 
       case ChatCommandConstants.STAY:
-        this.stay(userTeam);
+        this.stay(userTeam as TeamConstants);
         break;
 
       case ChatCommandConstants.SWAP:
       case ChatCommandConstants.SWITCH:
-        this.swap(userTeam);
+        this.swap(userTeam as TeamConstants);
         break;
 
       case ChatCommandConstants.KNIFE:
@@ -932,6 +827,7 @@ export default class Server {
       case ChatCommandConstants.SETTINGS:
         this.settings();
         break;
+
       case ChatCommandConstants.DISCONNECT:
       case ChatCommandConstants.QUIT:
       case ChatCommandConstants.LEAVE:

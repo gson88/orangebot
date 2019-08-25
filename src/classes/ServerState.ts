@@ -1,59 +1,69 @@
 import TeamConstants from '../constants/teams';
 import Player from './Player';
+import { IDefaultConfig } from '../types/types';
+import Logger from '../utils/logger';
+
+interface TeamBoolean {
+  [TeamConstants.TERRORIST]: boolean;
+  [TeamConstants.CT]: boolean;
+}
 
 export default class ServerState {
-  live = false;
   map = '';
   maps: string[] = [];
   mapindex = 0;
+  demoname = '';
+  live = false;
   knife: boolean;
   record: boolean;
-  demoname = '';
-  score: any[] = [];
-  fullmap: boolean;
-  ot: boolean;
-  knifewinner: string = null;
   paused = false;
   freeze = false;
+  fullmap: boolean;
+  ot: boolean;
   pause_time = -1;
   ready_time = -1;
-  unpause: {
-    [team: string]: boolean;
-  } = {
+  lastLog: number;
+  knifewinner: TeamConstants = null;
+  score: {
+    [map: string]: {
+      [clanTag: string]: number;
+    };
+  };
+  unpause: TeamBoolean = {
     [TeamConstants.TERRORIST]: false,
     [TeamConstants.CT]: false
   };
-  ready: {
-    [TeamConstants.TERRORIST]: boolean;
-    [TeamConstants.CT]: boolean;
-    timer?: NodeJS.Timeout;
-  } = {
+  ready: TeamBoolean = {
     [TeamConstants.TERRORIST]: false,
     [TeamConstants.CT]: false
   };
   players: {
     [steamId: string]: Player;
   } = {};
-  pauses: { timer: any } = { timer: null };
-  lastLog: number = null;
 
-  constructor(values) {
-    for (const key in values) {
-      if (!this.hasOwnProperty(key) || !values.hasOwnProperty(key)) {
-        continue;
-      }
-
-      this[key] = values[key];
-    }
+  constructor(values: IDefaultConfig) {
+    this.setValues(values);
     return this;
   }
 
-  /**
-   * @returns {Player}
-   */
-  getPlayer = (steamId: string) => {
-    return this.players[steamId] ? this.players[steamId] : undefined;
+  getPlayer = (steamId: string): Player | undefined => {
+    return this.players[steamId];
   };
+
+  setValues(values: IDefaultConfig) {
+    Object.entries(values).forEach(([key, value]) => {
+      if (!this.hasOwnProperty(key) || !values.hasOwnProperty(key)) {
+        Logger.warning(
+          'Tried to set non-existing property in ServerState:',
+          key
+        );
+        return true;
+      }
+
+      this[key] = value;
+    });
+    return this;
+  }
 
   addPlayer = (
     steamId: string,

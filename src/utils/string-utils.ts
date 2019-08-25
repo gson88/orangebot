@@ -1,13 +1,13 @@
-export function formatString(text: string, ...args: any[]) {
+export function formatString(text: string, ...args: any[]): string {
   let formatted = text;
   for (let i = 0; i < args.length; i++) {
-    let regexp = new RegExp('\\{' + i + '\\}', 'gi');
+    const regexp = new RegExp('\\{' + i + '\\}', 'gi');
     formatted = formatted.replace(regexp, args[i]);
   }
   return formatted;
 }
 
-export function cleanString(str) {
+export function cleanString(str: string): string {
   return str.replace(/[^A-Za-z0-9: \-_,]/g, '');
 }
 

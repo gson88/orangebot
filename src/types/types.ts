@@ -25,3 +25,7 @@ export interface IDefaultConfig {
   pause_time: number;
   ready_time: number;
 }
+
+export interface NamedRegexMatches {
+  capture: (name: string) => string;
+}

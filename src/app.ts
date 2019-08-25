@@ -45,13 +45,13 @@ const run = async (config: IConfig) => {
       if (!server) {
         Logger.warning(
           'Received a socket message for a server that is not in memory',
-          { addr, msg }
+          { addr, msg: msg.toString() }
         );
         return;
       }
 
       Logger.verbose('Socket message received for serverId', server.serverId);
-      server.handleSocketMessage(msg.toString());
+      server.onSocketMessage(msg.toString());
     }
   );
 
@@ -63,7 +63,7 @@ const run = async (config: IConfig) => {
         .setAdmins(admins.map(id64))
         .whitelistSocket(socketIp, socketPort);
 
-      socketHandler.init(server.ip, server.port);
+      socketHandler.init(serverConfig.host, serverConfig.port);
       server.startServer();
 
       return server;

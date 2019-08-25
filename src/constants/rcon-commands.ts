@@ -6,6 +6,7 @@ export default {
   KNIFE_STAY: 'mp_unpause_match',
   KNIFE_SWAP: 'mp_unpause_match;mp_swapteams',
   PAUSE_ENABLED: 'mp_pause_match;say \x10Pausing match on freeze time!',
+  RESTART_MAP: 'mp_restartgame {0}',
   MATCH_STARTING:
     'mp_unpause_match;mp_warmup_pausetimer 0;mp_warmuptime 0;mp_warmup_end;log on;say \x10Both teams are \x06!ready.',
   MATCH_UNPAUSE:
@@ -19,7 +20,10 @@ export default {
   RESTORE_ROUND:
     'mp_backup_restore_load_file "{0}",say \x10Round \x06{1}\x10 has been restored, resuming match in:,say \x085...',
   WHITELIST_ADDRESS:
-    'sv_rcon_whitelist_address {0};logaddress_add {1}:{2};log on;',
+    'sv_rcon_whitelist_address {0};logaddress_add {0}:{1};log on;',
+  REMOVE_WHITELIST_ADDRESS: 'logaddress_delall;log off;',
+  ENABLE_OT: 'mp_overtime_enable 1; say \x10Enabled Overtime.',
+  DISALBE_OT: 'mp_overtime_enable 0;say \x10Disabled Overtime.',
   SAY_WELCOME:
     // eslint-disable-next-line quotes
     "say \x10Hi! I'm OrangeBot v3.0.;say \x10Start a match with \x06!start map \x08map map",
@@ -45,8 +49,6 @@ export default {
   SAY_DEMO_FINISHED: 'say \x10Finished recording GOTV Demo: \x06{0}',
   SAY_DEMO_RECDISABLED: 'say \x10Disabled GOTV Demo recording.',
   SAY_DEMO_RECENABLED: 'say \x10Enabled GOTV Demo recording.',
-  SAY_OT_ENABLED: 'say \x10Enabled Overtime.',
-  SAY_OT_DISABLED: 'say \x10Disabled Overtime.',
   SAY_FM_ENABLED: 'say \x10Map will be fully played out.',
   SAY_FM_DISABLED: 'say \x10Map will not be played out.',
   SAY_SETTINGS: 'say \x10Match Settings:',
