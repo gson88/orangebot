@@ -1,5 +1,5 @@
 export interface IConfig {
-  servers: IServer[];
+  servers: IServerConfig[];
   gameConfigs: IGameConfigs;
   defaults: IDefaultConfig;
   admins: string[];
@@ -7,19 +7,14 @@ export interface IConfig {
   serverType: 'local' | 'external';
 }
 
-export interface IServer {
+export interface IServerConfig {
   host: string;
   port: number;
   rconpass: string;
 }
 
 export interface IGameConfigs {
-  [key: string]: string;
-  // warmup: string;
-  // overtime: string;
-  // fullmap: string;
-  // knife: string;
-  // match: string;
+  [configName: string]: string;
 }
 
 export interface IDefaultConfig {

@@ -5,8 +5,16 @@ import Server from './classes/Server';
 import SocketHandler from './classes/SocketHandler';
 import Logger from './utils/logger';
 import ServerHandler from './classes/ServerHandler';
-import { IConfig } from './types/types';
+import { IConfig, IGameConfigs } from './types/types';
 import { RemoteInfo } from 'dgram';
+import { resolve } from 'path';
+
+const prependPathToConfigFiles = (gameConfigs: IGameConfigs): IGameConfigs => {
+  return Object.entries(gameConfigs).reduce((acc, [key, value]) => {
+    acc[key] = resolve(process.cwd(), 'cfg', value);
+    return acc;
+  }, {});
+};
 
 const run = async (config: IConfig) => {
   const {
@@ -22,38 +30,45 @@ const run = async (config: IConfig) => {
     serverType === 'local' ? ip.address() : await getPublicIP.v4();
 
   const serverHandler = new ServerHandler();
-  const socketHandler = new SocketHandler(socketPort);
+  const socketHandler = new SocketHandler(
+    socketPort,
+    (msg: Buffer, info: RemoteInfo) => {
+      if (msg.toString().includes('rcon from')) {
+        return;
+      }
 
-  socketHandler.addSocketMessageCallback((msg: Buffer, info: RemoteInfo) => {
-    const addr = `${info.address}:${info.port}`;
-    const server = serverHandler.getServer(addr);
+      Logger.verbose('onSocketMessage', { msg, info });
 
-    if (!server) {
-      Logger.warning(
-        'Received a socket message for a server that is not in memory',
-        {
-          addr,
-          msg
-        }
-      );
-      return;
+      const addr = `${info.address}:${info.port}`;
+      const server = serverHandler.getServerWithIpAndPort(addr);
+
+      if (!server) {
+        Logger.warning(
+          'Received a socket message for a server that is not in memory',
+          { addr, msg }
+        );
+        return;
+      }
+
+      Logger.verbose('Socket message received for serverId', server.serverId);
+      server.handleSocketMessage(msg.toString());
     }
+  );
 
-    Logger.verbose('Socket message received from serverId', server.serverId);
-    server.handleSocketMessage(msg.toString());
-  });
+  const fixedGameConfigs = prependPathToConfigFiles(gameConfigs);
 
-  const serverInstances = serverConfigs.map(serverConfig => {
-    const server = new Server(serverConfig, defaults, gameConfigs)
-      .setAdmins(admins.map(id64))
-      .whitelistSocket(socketIp, socketPort);
+  serverHandler.addServers(
+    serverConfigs.map(serverConfig => {
+      const server = new Server(serverConfig, defaults, fixedGameConfigs)
+        .setAdmins(admins.map(id64))
+        .whitelistSocket(socketIp, socketPort);
 
-    socketHandler.init(server.ip, server.port);
-    server.startServer();
+      socketHandler.init(server.ip, server.port);
+      server.startServer();
 
-    return server;
-  });
-  serverHandler.addServers(serverInstances);
+      return server;
+    })
+  );
 };
 
 process.on('unhandledRejection', (err: any) => {

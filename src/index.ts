@@ -22,9 +22,7 @@ function printHelp() {
   console.log('Arguments:');
   console.log(' -i filename.json           Set the json file to use');
   console.log(' -h                         See this help');
-  console.log(
-    ' -d                         Verbose logging (Default on in dev)'
-  );
+  console.log(' -d                         Verbose logging');
   console.log();
   console.log(
     `For further documentation, visit our GitHub wiki: ${appInfo.repository.url}/wiki`

@@ -18,10 +18,13 @@ export default {
   CHANGE_MAP: 'changelevel ${0}',
   RESTORE_ROUND:
     'mp_backup_restore_load_file "{0}",say \x10Round \x06{1}\x10 has been restored, resuming match in:,say \x085...',
+  WHITELIST_ADDRESS:
+    'sv_rcon_whitelist_address {0};logaddress_add {1}:{2};log on;',
   SAY_WELCOME:
     // eslint-disable-next-line quotes
     "say \x10Hi! I'm OrangeBot v3.0.;say \x10Start a match with \x06!start map \x08map map",
-  SAY_WARMUP: 'say \x10Match will start when both teams are \x06!ready\x10',
+  SAY_WARMUP:
+    'say \x10Warmup started! Match will start when both teams are \x06!ready\x10',
   SAY_WARMUP_KNIFE:
     'say \x10Knife round will start when both teams are \x06!ready\x10',
   SAY_WARMUP_TIME: 'say \x10or after a maximum of \x06{0}\x10 seconds.',
@@ -37,7 +40,7 @@ export default {
   SAY_MATCH_PAUSED:
     'say \x10Match will resume when both teams are \x06!ready\x10.',
   SAY_TEAM_READY: 'say \x10{0} are \x06!ready\x10, waiting for {1}.',
-  SAY_LIVE: 'say \x03LIVE!;say \x0eLIVE!;say \x02LIVE!',
+  SAY_LIVE: 'say \x03LIVE!;',
   SAY_DEMO_REC: 'say \x10Started recording GOTV Demo: \x06{0}',
   SAY_DEMO_FINISHED: 'say \x10Finished recording GOTV Demo: \x06{0}',
   SAY_DEMO_RECDISABLED: 'say \x10Disabled GOTV Demo recording.',

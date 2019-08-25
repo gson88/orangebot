@@ -20,15 +20,15 @@ export default class ServerHandler {
     delete this.servers[server.getIpAndPort()];
   };
 
-  getServer = (ipAndPort: string): Server | undefined => {
+  getServerWithIpAndPort = (ipAndPort: string): Server | undefined => {
     return this.servers[ipAndPort];
   };
 
   tickCommandQueue = () => {
     Object.values(this.servers)
       .filter(server => server.commandQueue.length > 0)
-      .forEach(server => {
-        server.execRconCommand(server.commandQueue.shift());
+      .forEach(async server => {
+        await server.execRconCommand(server.commandQueue.shift());
       });
   };
 }

@@ -2,40 +2,43 @@ import fs from 'fs';
 import RCon from 'simple-rcon';
 import regexp from 'named-regexp';
 import id64 from '../utils/steam-id-64';
-import TeamConstants from '../constants/teams';
-import Commands from '../constants/rcon-commands';
-import ServerState from './ServerState';
 import {
   formatString,
   cleanString,
   cleanChatString
 } from '../utils/string-utils';
 import Logger from '../utils/logger';
-import { IDefaultConfig, IGameConfigs, IServer } from '../types/types';
-import SocketHandler from './SocketHandler';
-import { ChatCommandConstants } from '../constants/chat-commands';
+import TeamConstants from '../constants/teams';
+import Commands from '../constants/rcon-commands';
+import SocketMessages from '../constants/socket-message-regexes';
+import ChatCommandConstants from '../constants/chat-commands';
+import ServerState from './ServerState';
+import { IDefaultConfig, IGameConfigs, IServerConfig } from '../types/types';
 
 //Todo: Prevent memory leaks / remove existing timeouts when removing server
 export default class Server {
   static nrInstances = 0;
-
   ip: string;
   port: number;
   rconpass: string;
   serverId: number;
   admins: string[] = [];
   commandQueue: string[] = [];
+  rconConnection: any = null;
+  rconPromise: Promise<any> = null;
+  state: ServerState;
   defaultSettings: IDefaultConfig;
   configFiles: IGameConfigs;
-  rconConnection: any = null;
-  state: ServerState;
 
   constructor(
-    serverConfig: IServer,
+    serverConfig: IServerConfig,
     defaults: IDefaultConfig,
     gameConfigs: IGameConfigs
   ) {
-    Logger.log('Creating new Server with serverId', Server.nrInstances);
+    Logger.log('Instantiating Server', {
+      ...serverConfig,
+      rconpass: '*********'
+    });
 
     this.ip = serverConfig.host;
     this.port = serverConfig.port;
@@ -51,30 +54,49 @@ export default class Server {
     return this;
   }
 
-  getRconConnection() {
+  async getRconConnection() {
     Logger.log('getRconConnection');
+
+    if (this.rconPromise) {
+      Logger.log('Waiting for promise');
+      return this.rconPromise;
+    }
+
     if (this.rconConnection) {
       return this.rconConnection;
     }
 
-    this.rconConnection = this.createRconConnection();
+    await this.createRconConnection();
     return this.rconConnection;
   }
 
-  createRconConnection() {
-    return new RCon({
+  async createRconConnection() {
+    Logger.verbose('createRconConnection');
+    this.rconConnection = new RCon({
       host: this.ip,
       port: this.port,
       password: this.rconpass,
       connect: true
+      // timeout: 20000
     })
       .on('error', err => {
-        Logger.error('RconConnection error');
+        Logger.error('Rcon error');
         throw err;
       })
-      .on('disconnected', () => {
+      .on('disconnected', a => {
+        Logger.log('Rcon disconnected', a);
         this.rconConnection = null;
       });
+
+    this.rconPromise = new Promise(resolve => {
+      this.rconConnection.on('connected', () => {
+        Logger.log('Rcon connected');
+        this.rconPromise = null;
+        resolve(this.rconConnection);
+      });
+    });
+
+    return this.rconPromise;
   }
 
   getIpAndPort(): string {
@@ -87,19 +109,15 @@ export default class Server {
 
   whitelistSocket(socketIp: string, socketPort: number) {
     this.addToCommandQueue(
-      `sv_rcon_whitelist_address ${socketIp};logaddress_add ${socketIp}:${socketPort};log on`
+      formatString(Commands.WHITELIST_ADDRESS, socketIp, socketIp, socketPort)
     );
     return this;
   }
 
-  startServer() {
-    this.getGameStatus();
+  async startServer() {
+    await this.getGameStatus();
 
-    setTimeout(() => {
-      this.addToCommandQueue(Commands.SAY_WELCOME);
-    }, 1000);
-
-    // Logger.log(`${this.ip}:${this.port} - Connected to Server.`);
+    this.addToCommandQueue(Commands.SAY_WELCOME);
     return this;
   }
 
@@ -108,15 +126,31 @@ export default class Server {
       return;
     }
 
-    const splitCommands = commands.split(';').map(cmd => cmd.trim());
-    this.commandQueue = this.commandQueue.concat(splitCommands);
+    const trimmedCommands = commands.split(';').map(cmd => cmd.trim());
+    // .reduce((acc: any, curr: any) => {
+    //   if (
+    //     acc.length === 0 ||
+    //     Buffer.byteLength(acc[acc.length - 1]) + Buffer.byteLength(curr) >
+    //       2000
+    //   ) {
+    //     acc.push(curr);
+    //   } else {
+    //     acc[acc.length - 1] = acc[acc.length - 1].concat(';', curr);
+    //   }
+    //   return acc;
+    // }, []);
+
+    this.commandQueue = this.commandQueue.concat(trimmedCommands);
   }
 
-  execRconCommand(command: string) {
-    const conn = this.getRconConnection();
+  async execRconCommand(command: string) {
+    Logger.log('Will send command:');
+    const conn = await this.getRconConnection();
 
-    Logger.verbose('Sending command:', command);
-    conn.exec(command);
+    Logger.log('Sending command:', command);
+    conn.exec(command, resp => {
+      Logger.log('rcon response', resp.body.split('\n'));
+    });
   }
 
   clantag(team: TeamConstants) {
@@ -306,8 +340,8 @@ export default class Server {
     }
   }
 
-  getGameStatus() {
-    const conn = this.getRconConnection();
+  async getGameStatus() {
+    const conn = await this.getRconConnection();
     conn.exec('status', res => {
       const regex = regexp.named(/map\s+:\s+(:<map>.*?)\s/);
       const match = regex.exec(res.body);
@@ -316,7 +350,6 @@ export default class Server {
       }
 
       this.state.map = match.capture('map');
-      // this.calculateStats(false);
     });
   }
 
@@ -650,24 +683,15 @@ export default class Server {
 
   debug() {
     this.addToCommandQueue(
-      'say \x10live: ' +
-        this.state.live +
-        ' paused: ' +
-        this.state.paused +
-        ' freeze: ' +
-        this.state.freeze +
-        ' knife: ' +
-        this.state.knife +
-        ' knifewinner: ' +
-        this.state.knifewinner +
-        ' ready: T:' +
-        this.state.ready.TERRORIST +
-        ' CT:' +
-        this.state.ready.CT +
-        ' unpause: T:' +
-        this.state.unpause.TERRORIST +
-        ' CT:' +
-        this.state.unpause.CT
+      `say \x10live: ${this.state.live}` +
+        ` paused: ${this.state.paused}` +
+        ` freeze: ${this.state.freeze}` +
+        ` knife: ${this.state.knife}` +
+        ` knifewinner: ${this.state.knifewinner}` +
+        ` ready: T: ${this.state.ready.TERRORIST}` +
+        ` ready: CT: ${this.state.ready.CT}` +
+        ` unpause: T: ${this.state.unpause.TERRORIST}` +
+        `unpause: CT: ${this.state.unpause.CT}`
     );
     this.calculateStats(true);
   }
@@ -708,27 +732,105 @@ export default class Server {
   }
 
   handleSocketMessage(text: string) {
-    SocketHandler.handleTeamJoin(text, this);
-    SocketHandler.handleClantag(text, this);
-    SocketHandler.handlePlayerDisconnect(text, this);
-    SocketHandler.handleMapLoading(text, this);
-    SocketHandler.handleMapLoaded(text, this);
-    SocketHandler.handleRoundStart(text, this);
-    SocketHandler.handleRoundEnd(text, this);
-    SocketHandler.handleGameOver(text, this);
-    this.handleCommand(text);
+    const found = this.handle(text, [
+      [SocketMessages.TEAM_JOIN, this.handleTeamJoin],
+      [SocketMessages.CLANTAG, this.handleClantag],
+      [SocketMessages.PLAYER_DISCONNECT, this.handlePlayerDisconnect],
+      [SocketMessages.LOADING_MAP, this.handleMapLoading],
+      [SocketMessages.LOADED_MAP, this.handleMapLoaded],
+      [SocketMessages.ROUND_START, this.handleRoundStart],
+      [SocketMessages.ROUND_END, this.handleRoundEnd],
+      [SocketMessages.GAME_OVER, this.handleGameOver],
+      [SocketMessages.ADMIN_COMMAND, this.handleAdminCommand]
+    ]);
+
+    if (found) {
+      this.updateLastLog();
+    }
   }
 
-  handleCommand(text: string) {
-    // !command
-    const regex = regexp.named(
-      /"(:<user_name>.+)[<](:<user_id>\d+)[>][<](:<steam_id>.*)[>][<](:<user_team>CT|TERRORIST|Unassigned|Spectator|Console)[>]" say(:<say_team>_team)? "[!.](:<text>.*)"/
-    );
-    const match = regex.exec(text);
-    if (!match) {
-      return;
-    }
+  handle = (text: string, toTest: any[]) => {
+    return toTest.find(([regexTest, cb]) => {
+      const regex = regexp.named(regexTest);
+      const match = regex.exec(text);
+      if (!match) {
+        return false;
+      }
+      cb(match);
+      return true;
+    });
+  };
 
+  handleTeamJoin = (match: any) => {
+    const steamId = match.capture('steam_id');
+
+    const player = this.state.getPlayer(steamId);
+    if (!player) {
+      if (match.capture('steam_id') !== 'BOT') {
+        this.state.addPlayer(
+          steamId,
+          match.capture('new_team'),
+          match.capture('user_name')
+        );
+      }
+    } else {
+      player.team = match.capture('new_team');
+      player.name = match.capture('user_name');
+    }
+  };
+
+  handleClantag = (match: any) => {
+    const steamId = match.capture('steam_id');
+    const player = this.state.getPlayer(steamId);
+
+    if (!player) {
+      if (match.capture('steam_id') !== 'BOT') {
+        this.state.addPlayer(
+          steamId,
+          match.capture('user_team'),
+          match.capture('user_name'),
+          match.capture('clan_tag')
+        );
+      }
+    } else {
+      player.clantag =
+        match.capture('clan_tag') !== ''
+          ? match.capture('clan_tag')
+          : undefined;
+    }
+  };
+
+  handlePlayerDisconnect = (match: any) => {
+    const steamId = match.capture('steam_id');
+    this.state.deletePlayer(steamId);
+  };
+
+  handleMapLoading = () => {
+    this.state.clearPlayers();
+  };
+
+  handleMapLoaded = (match: any) => {
+    this.newmap(match.capture('map'));
+  };
+
+  handleRoundStart = () => {
+    this.round();
+  };
+
+  handleRoundEnd = (match: any) => {
+    const score = {
+      [TeamConstants.TERRORIST]: parseInt(match.capture('t_score')),
+      [TeamConstants.CT]: parseInt(match.capture('ct_score'))
+    };
+    this.score(score);
+  };
+
+  handleGameOver = () => {
+    this.mapend();
+  };
+
+  handleAdminCommand = (match: any) => {
+    // !-command
     const userId = match.capture('user_id');
     const steamId = match.capture('steam_id');
     const userTeam = match.capture('user_team');
@@ -739,18 +841,24 @@ export default class Server {
     params.shift();
 
     switch (cmd.toLowerCase()) {
+      case ChatCommandConstants.CMD:
+        this.addToCommandQueue(params.join(' '));
+        break;
+
       case ChatCommandConstants.RESTORE:
       case ChatCommandConstants.REPLAY:
         if (isAdmin) {
           this.restore(params);
         }
         break;
+
       case ChatCommandConstants.STATUS:
       case ChatCommandConstants.STATS:
       case ChatCommandConstants.SCORE:
       case ChatCommandConstants.SCORES:
         this.calculateStats(true);
         break;
+
       case ChatCommandConstants.RESTART:
       case ChatCommandConstants.RESET:
       case ChatCommandConstants.WARMUP:
@@ -758,6 +866,7 @@ export default class Server {
           this.warmup();
         }
         break;
+
       case ChatCommandConstants.MAPS:
       case ChatCommandConstants.MAP:
       case ChatCommandConstants.START:
@@ -767,11 +876,13 @@ export default class Server {
           this.start(params);
         }
         break;
+
       case ChatCommandConstants.FORCE:
         if (isAdmin) {
           this.ready(null);
         }
         break;
+
       case ChatCommandConstants.RESUME:
       case ChatCommandConstants.READY:
       case ChatCommandConstants.RDY:
@@ -780,21 +891,26 @@ export default class Server {
       case ChatCommandConstants.UNPAUSE:
         this.ready(userTeam);
         break;
+
       case ChatCommandConstants.PAUSE:
         this.pause();
         break;
+
       case ChatCommandConstants.STAY:
         this.stay(userTeam);
         break;
+
       case ChatCommandConstants.SWAP:
       case ChatCommandConstants.SWITCH:
         this.swap(userTeam);
         break;
+
       case ChatCommandConstants.KNIFE:
         if (isAdmin) {
           this.knife();
         }
         break;
+
       case ChatCommandConstants.RECORD:
         if (isAdmin) {
           this.record();
@@ -806,11 +922,13 @@ export default class Server {
           this.overtime();
         }
         break;
+
       case ChatCommandConstants.FULLMAP:
         if (isAdmin) {
           this.fullmap();
         }
         break;
+
       case ChatCommandConstants.SETTINGS:
         this.settings();
         break;
@@ -822,16 +940,19 @@ export default class Server {
           Logger.log(this.getIpAndPort() + ' - Disconnected by admin.');
         }
         break;
+
       case ChatCommandConstants.SAY:
         if (isAdmin) {
           this.say(params.join(' '));
         }
         break;
+
       case ChatCommandConstants.DEBUG:
         this.debug();
         break;
+
       default:
+        break;
     }
-    this.updateLastLog();
-  }
+  };
 }
