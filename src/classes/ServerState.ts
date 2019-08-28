@@ -46,10 +46,6 @@ export default class ServerState {
     return this;
   }
 
-  getPlayer = (steamId: string): Player | undefined => {
-    return this.players[steamId];
-  };
-
   setValues(values: IDefaultConfig) {
     Object.entries(values).forEach(([key, value]) => {
       if (!this.hasOwnProperty(key) || !values.hasOwnProperty(key)) {
@@ -74,6 +70,10 @@ export default class ServerState {
     this.players[steamId] = new Player(steamId, team, name, clantag);
   };
 
+  getPlayer = (steamId: string): Player | undefined => {
+    return this.players[steamId];
+  };
+
   deletePlayer = (steamId: string) => {
     if (this.players[steamId]) {
       delete this.players[steamId];
@@ -86,5 +86,9 @@ export default class ServerState {
 
   updateLastLog = () => {
     this.lastLog = Date.now();
+  };
+
+  isFinalMap = () => {
+    return this.maps.length === this.mapindex;
   };
 }
