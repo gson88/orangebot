@@ -1,6 +1,9 @@
 # Users config
 /config.json
 
+#TS output
+dist
+
 # mac bs
 .DS_store
 
